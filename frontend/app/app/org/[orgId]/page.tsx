@@ -22,7 +22,7 @@ export default function OrgHome() {
   }, [folders, orgId, router]);
 
   if (isLoading || (folders && folders.length > 0)) {
-    return <div className="text-muted">Loading…</div>;
+    return <div className="text-sm text-muted">Loading…</div>;
   }
 
   // Rare fallback: the auto-created "Home" root folder (org.Service.Create)
@@ -30,8 +30,8 @@ export default function OrgHome() {
   return (
     <div className="mx-auto max-w-sm">
       <Card>
-        <h2 className="mb-1 text-lg font-semibold">No folders yet</h2>
-        <p className="mb-4 text-sm text-muted">Create your first folder to get started.</p>
+        <h2 className="mb-1 text-base font-semibold">No folders yet</h2>
+        <p className="mb-4 text-xs text-muted">Create your first folder to get started.</p>
         <CreateFolderForm
           onCreate={async (name) => {
             await api.folders.create(orgId, name, null);

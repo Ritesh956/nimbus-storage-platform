@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { FileIcon, SearchIcon } from "@/components/ui/Icons";
 import { formatBytes, formatDate } from "@/lib/format";
 import type { SearchResult } from "@/lib/types";
 
@@ -35,32 +37,53 @@ export default function SearchPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <h1 className="text-xl font-semibold">Search</h1>
+    <div className="flex flex-col gap-5">
+      <PageHeader title="Search" description="Full-text search across every file name in this organization." />
+
       <form onSubmit={search} className="flex gap-2">
-        <Input placeholder="File name…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Input placeholder="Type, e.g. image" value={type} onChange={(e) => setType(e.target.value)} className="max-w-40" />
-        <Button type="submit" disabled={loading}>
+        <div className="relative flex-1">
+          <SearchIcon size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-2" />
+          <Input placeholder="Search files…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
+        </div>
+        <Input
+          placeholder="Type, e.g. image"
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          className="max-w-36"
+        />
+        <Button type="submit" disabled={loading} className="shrink-0">
           {loading ? "Searching…" : "Search"}
         </Button>
       </form>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
 
       {results && (
-        <div className="flex flex-col gap-2">
-          {results.length === 0 && <p className="text-sm text-muted">No results.</p>}
-          {results.map((r) => (
-            <Link
-              key={r.file_id}
-              href={`/app/org/${orgId}/folder/${r.folder_id}`}
-              className="flex items-center justify-between rounded-lg border border-border px-4 py-3 text-sm hover:border-border-strong hover:bg-surface-2"
-            >
-              <span>📄 {r.name}</span>
-              <span className="text-xs text-muted">
-                {formatBytes(r.size_bytes)} · {r.mime_type ?? "unknown"} · {formatDate(r.created_at)}
-              </span>
-            </Link>
-          ))}
+        <div className="panel overflow-hidden">
+          <div className="border-b border-border/60 px-5 py-3.5 text-sm font-medium">
+            Results <span className="ml-1 text-xs font-normal text-muted-2">{results.length}</span>
+          </div>
+          {results.length === 0 ? (
+            <p className="px-5 py-6 text-center text-xs text-muted-2">No results.</p>
+          ) : (
+            <ul>
+              {results.map((r) => (
+                <li key={r.file_id} className="border-t border-border/40 first:border-t-0">
+                  <Link
+                    href={`/app/org/${orgId}/folder/${r.folder_id}`}
+                    className="glow-ring flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/60"
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
+                      <FileIcon size={15} />
+                    </span>
+                    <span className="flex-1 truncate text-sm">{r.name}</span>
+                    <span className="shrink-0 text-xs text-muted-2">
+                      {formatBytes(r.size_bytes)} · {r.mime_type ?? "unknown"} · {formatDate(r.created_at)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { ApiError } from "@/lib/api";
-import { Card, EyebrowLabel } from "@/components/ui/Card";
+import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { LogoMark } from "@/components/ui/Icons";
 
 export default function RegisterPage() {
   const { register, login } = useAuth();
@@ -34,37 +35,51 @@ export default function RegisterPage() {
 
   return (
     <div className="flex flex-1 items-center justify-center px-4">
-      <Card className="w-full max-w-sm">
-        <EyebrowLabel>Nimbus</EyebrowLabel>
-        <h1 className="mt-1 text-2xl font-semibold">Create your account</h1>
-        <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
-          <div>
-            <label className="mb-1 block text-sm text-muted">Email</label>
-            <Input type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center gap-3">
+          <LogoMark size={44} />
+          <div className="text-center">
+            <h1 className="text-xl font-semibold tracking-tight">Create your account</h1>
+            <p className="mt-1 text-xs text-muted">Distributed storage for your team</p>
           </div>
-          <div>
-            <label className="mb-1 block text-sm text-muted">Password</label>
-            <Input
-              type="password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="mt-1 text-xs text-muted">At least 8 characters.</p>
-          </div>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <Button type="submit" disabled={loading} className="w-full">
-            {loading ? "Creating account…" : "Create account"}
-          </Button>
-        </form>
-        <p className="mt-5 text-center text-sm text-muted">
+        </div>
+        <Card className="p-6">
+          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted">Email</label>
+              <Input
+                type="email"
+                required
+                autoFocus
+                placeholder="you@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted">Password</label>
+              <Input
+                type="password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <p className="mt-1.5 text-[11px] text-muted-2">At least 8 characters.</p>
+            </div>
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">
+              {loading ? "Creating account…" : "Create account"}
+            </Button>
+          </form>
+        </Card>
+        <p className="mt-5 text-center text-xs text-muted">
           Already have an account?{" "}
-          <Link href="/login" className="text-accent hover:underline">
+          <Link href="/login" className="glow-ring rounded font-medium text-accent hover:underline">
             Sign in
           </Link>
         </p>
-      </Card>
+      </div>
     </div>
   );
 }

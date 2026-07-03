@@ -4,6 +4,16 @@ import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { Button } from "./ui/Button";
+import {
+  FileIcon,
+  DownloadIcon,
+  PencilIcon,
+  LinkIcon,
+  TrashIcon,
+  CopyIcon,
+  ChevronDownIcon,
+  RestoreIcon,
+} from "./ui/Icons";
 import type { FileVersion, ShareLink } from "@/lib/types";
 
 interface Props {
@@ -119,12 +129,17 @@ export function FileRow({ fileId, name, onChanged }: Props) {
   }
 
   return (
-    <div className="rounded-lg border border-border">
-      <button onClick={toggle} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2">
-        <span aria-hidden>📄</span>
+    <li className="border-t border-border/40 first:border-t-0">
+      <button
+        onClick={toggle}
+        className="glow-ring flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-2/60"
+      >
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
+          <FileIcon size={15} />
+        </span>
         {renaming ? (
           <input
-            className="flex-1 rounded border border-border bg-surface px-2 py-1 text-sm"
+            className="glow-ring flex-1 rounded-lg border border-border bg-surface-deep px-2 py-1 text-sm"
             value={newName}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => setNewName(e.target.value)}
@@ -132,41 +147,50 @@ export function FileRow({ fileId, name, onChanged }: Props) {
         ) : (
           <span className="flex-1 truncate text-sm">{name}</span>
         )}
-        {versions?.[0] && <span className="text-xs text-muted">{formatBytes(versions[0].size_bytes)}</span>}
+        {versions?.[0] && <span className="text-xs text-muted-2">{formatBytes(versions[0].size_bytes)}</span>}
+        <ChevronDownIcon
+          size={14}
+          className={`shrink-0 text-muted-2 transition-transform ${open ? "rotate-180" : ""}`}
+        />
       </button>
 
       {open && (
-        <div className="border-t border-border px-4 py-3 text-sm">
-          {error && <p className="mb-2 text-danger">{error}</p>}
+        <div className="border-t border-border/40 bg-surface-deep/40 px-5 py-4 text-sm">
+          {error && <p className="mb-3 text-xs text-danger">{error}</p>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" disabled={busy} onClick={download}>
+            <Button variant="secondary" disabled={busy} onClick={download}>
+              <DownloadIcon size={13} />
               Download
             </Button>
             {renaming ? (
-              <Button variant="ghost" disabled={busy} onClick={rename}>
+              <Button variant="secondary" disabled={busy} onClick={rename}>
                 Save name
               </Button>
             ) : (
-              <Button variant="ghost" onClick={() => setRenaming(true)}>
+              <Button variant="secondary" onClick={() => setRenaming(true)}>
+                <PencilIcon size={13} />
                 Rename
               </Button>
             )}
-            <Button variant="ghost" disabled={busy} onClick={createShare}>
+            <Button variant="secondary" disabled={busy} onClick={createShare}>
+              <LinkIcon size={13} />
               Share
             </Button>
             <Button variant="danger" disabled={busy} onClick={trash}>
+              <TrashIcon size={13} />
               Move to trash
             </Button>
           </div>
 
           {share && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent-soft px-3 py-2">
               <input
                 readOnly
                 value={share.url}
                 className="min-w-0 flex-1 truncate bg-transparent text-xs text-muted"
               />
               <Button variant="ghost" className="shrink-0" onClick={() => navigator.clipboard.writeText(share.url)}>
+                <CopyIcon size={13} />
                 Copy
               </Button>
               <Button
@@ -182,14 +206,20 @@ export function FileRow({ fileId, name, onChanged }: Props) {
             </div>
           )}
 
-          <div className="mt-3">
-            <div className="mb-1 text-xs uppercase tracking-wide text-muted">Version history</div>
-            <ul className="flex flex-col gap-1">
+          <div className="mt-4">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-2">
+              Version history
+            </div>
+            <ul className="flex flex-col gap-1.5">
               {versions?.map((v, i) => (
                 <li key={v.id} className="flex items-center justify-between gap-2 text-xs text-muted">
                   <span>
                     {formatDate(v.created_at)} · {formatBytes(v.size_bytes)} · {v.mime_type}
-                    {i === 0 && <span className="ml-2 text-accent">current</span>}
+                    {i === 0 && (
+                      <span className="ml-2 rounded border border-success/25 bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                        current
+                      </span>
+                    )}
                   </span>
                   {i !== 0 && (
                     <Button
@@ -201,7 +231,8 @@ export function FileRow({ fileId, name, onChanged }: Props) {
                         onChanged();
                       }}
                     >
-                      Restore this version
+                      <RestoreIcon size={12} />
+                      Restore
                     </Button>
                   )}
                 </li>
@@ -210,6 +241,6 @@ export function FileRow({ fileId, name, onChanged }: Props) {
           </div>
         </div>
       )}
-    </div>
+    </li>
   );
 }

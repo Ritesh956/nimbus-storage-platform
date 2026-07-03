@@ -9,6 +9,8 @@ import { UploadDropzone } from "@/components/UploadDropzone";
 import { FileRow } from "@/components/FileRow";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ArrowLeftIcon, FolderIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
 
 export default function FolderPage() {
   const { orgId, folderId } = useParams<{ orgId: string; folderId: string }>();
@@ -38,18 +40,28 @@ export default function FolderPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <Link href={`/app/org/${orgId}`} className="text-sm text-muted hover:text-foreground">
-          ← All folders
-        </Link>
-        <Button variant="ghost" onClick={() => setShowNewFolder((s) => !s)}>
-          + New folder
-        </Button>
-      </div>
+    <div className="flex flex-col gap-5">
+      <Link
+        href={`/app/org/${orgId}`}
+        className="glow-ring -mb-1 inline-flex w-fit items-center gap-1.5 rounded text-xs text-muted-2 transition-colors hover:text-foreground"
+      >
+        <ArrowLeftIcon size={13} />
+        All folders
+      </Link>
+
+      <PageHeader
+        title="Files"
+        description="Chunked, deduplicated, and replicated across storage nodes."
+        actions={
+          <Button variant="secondary" onClick={() => setShowNewFolder((s) => !s)}>
+            <PlusIcon size={13} />
+            New folder
+          </Button>
+        }
+      />
 
       {showNewFolder && (
-        <form onSubmit={createFolder} className="flex gap-2">
+        <form onSubmit={createFolder} className="-mt-3 flex gap-2">
           <Input
             autoFocus
             placeholder="Folder name"
@@ -57,44 +69,59 @@ export default function FolderPage() {
             onChange={(e) => setNewFolderName(e.target.value)}
             required
           />
-          <Button type="submit">Create</Button>
+          <Button type="submit" className="shrink-0">
+            Create
+          </Button>
         </form>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="-mt-3 text-xs text-danger">{error}</p>}
 
       <UploadDropzone folderId={folderId} onUploaded={() => mutate()} />
 
-      {isLoading && <p className="text-sm text-muted">Loading…</p>}
+      {isLoading && <p className="text-xs text-muted">Loading…</p>}
 
       {data && data.folders.length > 0 && (
-        <div>
-          <div className="mb-2 text-xs uppercase tracking-wide text-muted">Folders</div>
-          <div className="flex flex-col gap-2">
+        <div className="panel overflow-hidden">
+          <div className="border-b border-border/60 px-5 py-3.5 text-sm font-medium">Folders</div>
+          <ul>
             {data.folders.map((f) => (
-              <div key={f.id} className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                <Link href={`/app/org/${orgId}/folder/${f.id}`} className="flex-1 text-sm hover:text-accent">
-                  📁 {f.name}
+              <li
+                key={f.id}
+                className="group flex items-center gap-3 border-t border-border/40 px-5 py-3 transition-colors first:border-t-0 hover:bg-surface-2/60"
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent-2">
+                  <FolderIcon size={15} />
+                </span>
+                <Link
+                  href={`/app/org/${orgId}/folder/${f.id}`}
+                  className="glow-ring flex-1 truncate rounded text-sm hover:text-accent"
+                >
+                  {f.name}
                 </Link>
-                <Button variant="ghost" onClick={() => trashFolder(f.id)}>
-                  Trash
-                </Button>
-              </div>
+                <button
+                  onClick={() => trashFolder(f.id)}
+                  title="Move to trash"
+                  className="glow-ring rounded-lg p-1.5 text-muted-2 opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                >
+                  <TrashIcon size={15} />
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
 
       {data && (
-        <div>
-          <div className="mb-2 text-xs uppercase tracking-wide text-muted">Files</div>
+        <div className="panel overflow-hidden">
+          <div className="border-b border-border/60 px-5 py-3.5 text-sm font-medium">Files</div>
           {data.files.length === 0 ? (
-            <p className="text-sm text-muted">No files here yet.</p>
+            <p className="px-5 py-6 text-center text-xs text-muted-2">No files here yet — drop one above.</p>
           ) : (
-            <div className="flex flex-col gap-2">
+            <ul>
               {data.files.map((f) => (
                 <FileRow key={f.id} fileId={f.id} name={f.name} onChanged={() => mutate()} />
               ))}
-            </div>
+            </ul>
           )}
         </div>
       )}

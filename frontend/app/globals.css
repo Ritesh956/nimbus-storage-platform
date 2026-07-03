@@ -1,34 +1,46 @@
 @import "tailwindcss";
 
+/* Dashdark X design tokens, pulled from the Figma community file the user
+   picked as the design reference (Neutral/Primary/Secondary/System color
+   variables + Mona Sans type ramp). Values are verbatim from
+   get_variable_defs, not eyeballed. */
 :root {
-  --background: #0b0615;
-  --surface: #150c26;
-  --surface-2: #1c1233;
-  --border: rgba(168, 130, 255, 0.16);
-  --border-strong: rgba(168, 130, 255, 0.32);
-  --foreground: #f3eeff;
-  --muted: #a996c9;
-  --accent: #a78bfa;
-  --accent-strong: #8b5cf6;
-  --accent-soft: rgba(139, 92, 246, 0.16);
-  --danger: #f87171;
-  --success: #4ade80;
+  --background: #081028; /* Neutral 800 — page */
+  --surface: #0b1739; /* Neutral 600 — cards, tables */
+  --surface-2: #101c44; /* hover / selected rows (one step lighter than surface) */
+  --surface-deep: #0a1330; /* Neutral 700 — inputs, wells inside cards */
+  --border: #343b4f; /* Secondary 4 — hairlines */
+  --border-strong: #4a5473;
+  --foreground: #ffffff; /* Neutral 100 */
+  --muted: #aeb9e1; /* Neutral 400 — secondary text */
+  --muted-2: #7e89ac; /* Neutral 500 — tertiary text, labels */
+  --accent: #cb3cff; /* Primary Color 1 */
+  --accent-strong: #7f25fb;
+  --accent-soft: rgba(203, 60, 255, 0.12);
+  --accent-2: #00c2ff; /* Secondary Color 3 — cyan */
+  --danger: #ff5a65; /* System Red 300 */
+  --success: #14ca74; /* System Green 300 */
+  --warning: #ffb016; /* Other Yellow 50 */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-deep: var(--surface-deep);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-2: var(--accent-2);
   --color-danger: var(--danger);
   --color-success: var(--success);
-  --font-sans: var(--font-geist-sans);
+  --color-warning: var(--warning);
+  --font-sans: var(--font-mona-sans);
   --font-mono: var(--font-geist-mono);
 }
 
@@ -37,42 +49,19 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   min-height: 100vh;
-  position: relative;
 }
 
-/* Ambient purple glow blobs behind content — the Figma reference's signature
-   motif, reused sparingly (fixed, low-opacity, blurred) rather than per
-   section so it doesn't fight with real content for attention. */
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  border-radius: 9999px;
-  filter: blur(120px);
-  z-index: -1;
-  opacity: 0.35;
-  pointer-events: none;
-}
-body::before {
-  top: -10%;
-  left: -10%;
-  width: 40rem;
-  height: 40rem;
-  background: #6d28d9;
-}
-body::after {
-  bottom: -15%;
-  right: -10%;
-  width: 36rem;
-  height: 36rem;
-  background: #9333ea;
+/* Dashdark's signature button/brand gradient (magenta → violet). */
+.gradient-primary {
+  background-image: linear-gradient(128deg, #cb3cff 19%, #7f25fb 68%);
 }
 
-.glass-card {
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  backdrop-filter: blur(12px);
+/* Card panel: solid navy surface, hairline border, the file's Shadow 03. */
+.panel {
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(1, 5, 17, 0.3);
 }
 
 .glow-ring:focus-visible {
@@ -84,7 +73,6 @@ body::after {
   background: var(--accent-soft);
 }
 
-/* Thin, purple-tinted scrollbar to match the theme instead of the OS default */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -93,7 +81,7 @@ body::after {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--surface-2);
+  background: var(--border);
   border-radius: 9999px;
   border: 2px solid var(--background);
 }

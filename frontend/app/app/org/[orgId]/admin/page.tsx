@@ -3,7 +3,10 @@
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
-import { Card } from "@/components/ui/Card";
+import { StatCard } from "@/components/ui/Card";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { TablePanel, Th, Td, Tr } from "@/components/ui/Table";
+import { ServerIcon, PulseIcon } from "@/components/ui/Icons";
 import { timeAgo } from "@/lib/format";
 
 export default function AdminPage() {
@@ -12,28 +15,75 @@ export default function AdminPage() {
   // where a node's status changes without any user action to trigger a refetch.
   const { data: nodes } = useSWR("admin-nodes", () => api.admin.nodes(), { refreshInterval: 2000 });
 
+  const healthy = nodes?.filter((n) => n.status === "healthy").length ?? 0;
+  const down = (nodes?.length ?? 0) - healthy;
+
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-4">
-      <h1 className="text-xl font-semibold">Storage nodes</h1>
-      <p className="text-sm text-muted">
-        Consistent-hash-routed storage nodes, health-checked every 2s. Refreshes automatically.
-      </p>
-      <div className="flex flex-col gap-2">
-        {nodes?.map((n) => (
-          <Card key={n.id} className="flex items-center justify-between">
-            <div>
-              <div className="font-medium">{n.id}</div>
-              <div className="text-xs text-muted">{n.endpoint}</div>
-            </div>
-            <div className="text-right">
-              <Badge tone={n.status === "healthy" ? "success" : "danger"}>{n.status}</Badge>
-              <div className="mt-1 text-xs text-muted">
-                {n.last_heartbeat_at ? `heartbeat ${timeAgo(n.last_heartbeat_at)}` : "never seen"}
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Storage nodes"
+        description="Consistent-hash-routed storage nodes, health-checked every 2s. Refreshes automatically."
+      />
+
+      {nodes && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <StatCard
+            label="Total nodes"
+            value={nodes.length}
+            icon={<ServerIcon size={14} />}
+          />
+          <StatCard
+            label="Healthy"
+            value={healthy}
+            icon={<PulseIcon size={14} />}
+            chip={nodes.length ? `${Math.round((healthy / nodes.length) * 100)}%` : undefined}
+            chipTone="success"
+          />
+          <StatCard
+            label="Down"
+            value={down}
+            icon={<ServerIcon size={14} />}
+            chip={down > 0 ? "failover active" : undefined}
+            chipTone={down > 0 ? "danger" : "neutral"}
+          />
+        </div>
+      )}
+
+      <TablePanel title="Nodes">
+        <thead>
+          <tr>
+            <Th>Node</Th>
+            <Th>Endpoint</Th>
+            <Th>Status</Th>
+            <Th className="text-right">Last heartbeat</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {nodes?.map((n) => (
+            <Tr key={n.id}>
+              <Td className="font-medium">
+                <span className="flex items-center gap-2.5">
+                  <span
+                    className={`grid size-8 place-items-center rounded-lg bg-surface-deep ${
+                      n.status === "healthy" ? "text-accent-2" : "text-danger"
+                    }`}
+                  >
+                    <ServerIcon size={15} />
+                  </span>
+                  {n.id}
+                </span>
+              </Td>
+              <Td className="font-mono text-xs text-muted-2">{n.endpoint}</Td>
+              <Td>
+                <Badge tone={n.status === "healthy" ? "success" : "danger"}>{n.status}</Badge>
+              </Td>
+              <Td className="text-right text-xs text-muted-2">
+                {n.last_heartbeat_at ? timeAgo(n.last_heartbeat_at) : "never seen"}
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TablePanel>
     </div>
   );
 }

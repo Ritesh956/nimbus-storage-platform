@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { uploadFile, UploadProgress } from "@/lib/upload";
 import { formatBytes } from "@/lib/format";
+import { UploadCloudIcon } from "./ui/Icons";
 
 interface Props {
   folderId: string;
@@ -50,11 +51,17 @@ export function UploadDropzone({ folderId, onUploaded }: Props) {
           if (e.dataTransfer.files.length) startUploads(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className={`glow-ring cursor-pointer rounded-xl border-2 border-dashed p-6 text-center text-sm transition-colors ${
-          dragging ? "border-accent bg-accent-soft" : "border-border text-muted hover:border-border-strong"
+        className={`glow-ring flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-6 py-7 text-center transition-colors ${
+          dragging
+            ? "border-accent bg-accent-soft"
+            : "border-border bg-surface/40 hover:border-border-strong hover:bg-surface/70"
         }`}
       >
-        Drag & drop files here, or click to browse
+        <span className="gradient-primary grid size-10 place-items-center rounded-full text-white shadow-[0_0_18px_rgba(203,60,255,0.35)]">
+          <UploadCloudIcon size={19} />
+        </span>
+        <div className="text-sm font-medium">Drag &amp; drop files here, or click to browse</div>
+        <div className="text-[11px] text-muted-2">Chunked · resumable · deduplicated · replicated ×2</div>
         <input
           ref={inputRef}
           type="file"
@@ -70,20 +77,22 @@ export function UploadDropzone({ folderId, onUploaded }: Props) {
       {items.length > 0 && (
         <ul className="mt-3 flex flex-col gap-2">
           {items.map((it, i) => (
-            <li key={i} className="flex items-center gap-3 rounded-lg bg-surface-2 px-3 py-2 text-xs">
-              <span className="flex-1 truncate">{it.fileName}</span>
+            <li key={i} className="panel flex items-center gap-3 px-4 py-2.5 text-xs">
+              <span className="flex-1 truncate font-medium">{it.fileName}</span>
               {it.status === "error" ? (
                 <span className="text-danger">{it.error ?? "failed"}</span>
               ) : it.status === "done" ? (
-                <span className="text-success">done</span>
+                <span className="rounded border border-success/25 bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                  done
+                </span>
               ) : (
                 <>
-                  <span className="text-muted">
+                  <span className="text-muted-2">
                     {it.status} · {formatBytes(it.loadedBytes)}/{formatBytes(it.totalBytes)}
                   </span>
-                  <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface">
+                  <div className="h-1.5 w-28 overflow-hidden rounded-full bg-surface-deep">
                     <div
-                      className="h-full bg-accent-strong transition-all"
+                      className="h-full rounded-full bg-gradient-to-r from-accent-2 to-accent transition-all"
                       style={{ width: `${it.totalBytes ? Math.round((it.loadedBytes / it.totalBytes) * 100) : 0}%` }}
                     />
                   </div>
