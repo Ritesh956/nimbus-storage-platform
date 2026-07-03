@@ -130,14 +130,27 @@ func (r *Repository) RotateRefreshToken(ctx context.Context, oldTokenHash, newTo
 }
 
 // RevokeFamilyByTokenHash revokes every token in the family that hash
-// belongs to (logout). A hash that matches nothing is treated as already
-// revoked, not an error.
-func (r *Repository) RevokeFamilyByTokenHash(ctx context.Context, tokenHash string) error {
-	_, err := r.pool.Exec(ctx,
+// belongs to (logout), and returns the family's user_id for audit-logging
+// purposes. A hash that matches nothing is treated as already revoked, not
+// an error (userID is returned empty in that case).
+func (r *Repository) RevokeFamilyByTokenHash(ctx context.Context, tokenHash string) (userID string, err error) {
+	err = r.pool.QueryRow(ctx,
 		`DELETE FROM refresh_tokens WHERE family_id = (
 			SELECT family_id FROM refresh_tokens WHERE token_hash = $1
-		 )`,
+		 )
+		 RETURNING user_id`,
 		tokenHash,
-	)
+	).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return userID, err
+}
+
+// RecordAuditEvent appends a row to auth_audit_log (FR-4).
+func (r *Repository) RecordAuditEvent(ctx context.Context, userID, event string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO auth_audit_log (user_id, event) VALUES ($1, $2)`,
+		userID, event)
 	return err
 }

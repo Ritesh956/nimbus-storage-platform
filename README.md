@@ -8,11 +8,12 @@ Design docs (read in order): [docs/01-srs.md](docs/01-srs.md) · [02-system-desi
 
 Weeks 1-2 of the [roadmap](docs/09-roadmap.md) (Days 1-10) are feature-complete: auth, orgs, folders, files, the distributed storage router (consistent hashing + failover), chunked/resumable/deduplicated upload, versioning + download plans, public sharing, search, activity feed, `nimbus-worker`'s async thumbnail pipeline, and a Next.js frontend covering all of it — verified live in a real browser.
 
-Week 3 is in progress:
+Week 3 is complete:
 - **Day 11** — Prometheus metrics on both `nimbus-api` and `nimbus-worker`, two auto-provisioned Grafana dashboards (golden signals; storage-node health, the one to watch during the chaos demo below).
 - **Day 12** — a real mid-upload chaos test (`scripts/chaos-node-kill.js`: kill a storage node while a write is in flight, prove the upload still completes and the download still checksum-matches), targeted Go integration tests against real Postgres/Redis, and a k6 load test proving ≥50 concurrent uploads (NFR-2).
 - **Day 13** — the frontend is now containerized, and the whole stack deploys to a local Kubernetes cluster (`kind`) via a Helm chart this project owns (`nimbus-api`/`nimbus-worker`/`nimbus-web`), with plain manifests for the infra it depends on (Postgres, Redis, NATS, MinIO, Prometheus, Grafana).
-- **Day 14** (this) — CI runs the full test pyramid on every push (backend vet/build/unit/integration, frontend lint/build, four Docker image builds) and this README got the architecture diagram and demo script below.
+- **Day 14** — CI runs the full test pyramid on every push (backend vet/build/unit/integration, frontend lint/build, four Docker image builds) and this README got the architecture diagram and demo script below.
+- **Day 15** (this, final day) — SRS Definition-of-Done pass: built the auth audit log (FR-4) and read-side checksum verification (FR-8), measured p95 metadata latency for the first time (NFR-4: 20.5ms, `scripts/load-metadata.js`), and turned on GitHub branch protection so CI passing is actually required before a merge (NFR-6), not just green.
 
 See [docs/00-project-state.md](docs/00-project-state.md) for the authoritative, continuously-updated snapshot of what's built vs. designed-but-not-built.
 
@@ -129,5 +130,6 @@ A full walkthrough of the distributed-systems parts, in order:
 4. **Share it**: create a public share link, open it unauthenticated (`/shares/{token}`), confirm it downloads without a session.
 5. **Check the thumbnail + activity feed**: `nimbus-worker` picked up the `upload.completed` event over NATS, generated a thumbnail asynchronously, and wrote a `thumbnail_generated` activity entry — both visible in the UI without any manual trigger.
 6. **Load test** (optional, proves NFR-2): `docker run --rm --network host -e NIMBUS_BASE_URL=http://localhost:8080 -v "$(pwd)/scripts:/scripts" grafana/k6 run /scripts/load-upload.js` — ramps to 60 concurrent full upload sessions; last verified run: 3467 uploads, 0% failures.
+7. **Metadata latency test** (optional, proves NFR-4): `docker run --rm --network host -e NIMBUS_BASE_URL=http://localhost:8080 -v "$(pwd)/scripts:/scripts" grafana/k6 run /scripts/load-metadata.js` — same 60-VU concurrency, hitting `GET /v1/orgs/{orgId}/folders` in isolation; last verified run: p95 20.5ms (bound is 200ms).
 
-Steps 2-6 work identically against the Compose stack or the `kind` deployment (Option A/B above) — the demo doesn't care which one is up.
+Steps 2, 4, 5, 6, and 7 work identically against the Compose stack or the `kind` deployment (Option A/B above) — the demo doesn't care which one is up. **Step 3 is Compose-only**: `chaos-node-kill.js` drives `docker compose stop`/`start` on a named container, which has no equivalent once MinIO runs as `kind` pods rather than Compose containers. The same failover *behavior* is demonstrable under `kind` (`kubectl delete pod -n nimbus minio-node-1-0` and watch the same dashboard), but the script itself isn't kind-portable — found during the Day 15 SRS DoD pass, see docs/00-project-state.md.

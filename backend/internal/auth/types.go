@@ -26,3 +26,11 @@ var (
 	ErrInvalidRefresh     = errors.New("invalid or expired refresh token")
 	ErrUserNotFound       = errors.New("user not found")
 )
+
+// Audit event verbs for auth_audit_log (FR-4: basic audit log of auth
+// events — login, token refresh, logout).
+const (
+	AuditEventLogin   = "login"
+	AuditEventRefresh = "refresh"
+	AuditEventLogout  = "logout"
+)

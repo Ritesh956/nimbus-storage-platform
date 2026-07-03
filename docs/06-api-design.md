@@ -1,6 +1,6 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of Day 10** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works
+Status: **current as of Day 15** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found.
 Version: 0.3
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
@@ -34,6 +34,8 @@ Cursor pagination (`?cursor=&limit=`, response includes `next_cursor`) is implem
 | POST | `/v1/auth/login` | `{email, password}` | 200 `{access_token, refresh_token, expires_in}` | public |
 | POST | `/v1/auth/refresh` | `{refresh_token}` | 200 `{access_token, refresh_token, expires_in}` | public; rotates token, reuse-of-old-token revokes the whole family (LLD §3) |
 | POST | `/v1/auth/logout` | `{refresh_token}` | 204 | blacklists access token jti in Redis + revokes refresh family |
+
+Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4, Day 15) — best-effort, not part of any response body, no API surface of its own (queried directly in Postgres, not exposed via a route). `register` does not.
 
 ## 3. Orgs & membership — `internal/org`
 

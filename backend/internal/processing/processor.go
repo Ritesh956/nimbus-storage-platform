@@ -3,6 +3,8 @@ package processing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -106,24 +108,50 @@ func (p *Processor) reassemble(ctx context.Context, versionID string) ([]byte, e
 			return nil, fmt.Errorf("no locations recorded for chunk %s", c.Hash)
 		}
 
-		var obj io.ReadCloser
-		var getErr error
-		for _, nodeID := range nodeIDs {
-			obj, getErr = p.router.GetObject(ctx, nodeID, c.Hash)
-			if getErr == nil {
-				break
-			}
+		data, err := p.fetchVerifiedChunk(ctx, c.Hash, nodeIDs)
+		if err != nil {
+			return nil, err
 		}
-		if getErr != nil {
-			return nil, fmt.Errorf("fetch chunk %s from any replica: %w", c.Hash, getErr)
-		}
-		_, copyErr := io.Copy(&buf, obj)
-		obj.Close()
-		if copyErr != nil {
-			return nil, fmt.Errorf("read chunk %s: %w", c.Hash, copyErr)
-		}
+		buf.Write(data)
 	}
 	return buf.Bytes(), nil
+}
+
+// fetchVerifiedChunk fetches a chunk from each replica in order, re-hashing
+// the bytes and comparing against hash before accepting them — chunks are
+// content-addressed (FR-7), so the hash a replica is stored under is also
+// the expected digest of its bytes. This is FR-8's "checksum verification
+// ... on read", scoped to the one path where the server actually holds
+// reassembled bytes in memory (thumbnail generation): the direct-to-client
+// file download path (file.Service.DownloadPlan) hands out presigned URLs
+// straight to MinIO and never touches the server, so it stays
+// client-verified only — see docs/01-srs.md's FR-8 note. A replica that
+// fails the check is treated the same as one that's simply unreachable:
+// try the next one before giving up.
+func (p *Processor) fetchVerifiedChunk(ctx context.Context, hash string, nodeIDs []storage.NodeID) ([]byte, error) {
+	var lastErr error
+	for _, nodeID := range nodeIDs {
+		obj, err := p.router.GetObject(ctx, nodeID, hash)
+		if err != nil {
+			lastErr = fmt.Errorf("fetch from %s: %w", nodeID, err)
+			p.logger.Warn("failed to fetch chunk replica, trying next", "chunk_hash", hash, "node", nodeID, "error", err)
+			continue
+		}
+		data, err := io.ReadAll(obj)
+		obj.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read from %s: %w", nodeID, err)
+			p.logger.Warn("failed to read chunk replica, trying next", "chunk_hash", hash, "node", nodeID, "error", err)
+			continue
+		}
+		if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != hash {
+			lastErr = fmt.Errorf("checksum mismatch reading chunk %s from %s", hash, nodeID)
+			p.logger.Warn("chunk failed server-side checksum verification, trying next replica", "chunk_hash", hash, "node", nodeID)
+			continue
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("no replica of chunk %s passed checksum verification: %w", hash, lastErr)
 }
 
 func thumbnailObjectKey(versionID string) string { return "thumb:" + versionID }

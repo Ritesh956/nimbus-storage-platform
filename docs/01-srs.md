@@ -1,6 +1,6 @@
 # Software Requirements Specification — Nimbus Storage Platform
 
-Status: current as of Day 10 — requirements below reflect what's implemented; see docs/00-project-state.md for the up-to-date status summary
+Status: current as of Day 15 — requirements below reflect what's implemented; see docs/00-project-state.md for the up-to-date status summary. Day 15 was the SRS Definition-of-Done pass (§8): every FR/NFR below was cross-checked against the real running stack, not assumed from earlier sessions.
 Version: 0.2
 Scope window: 2-3 week solo build
 
@@ -24,13 +24,13 @@ The storage layer itself is the one deliberately distributed subsystem: multiple
 - FR-1 User registration + login (email/password)
 - FR-2 JWT access tokens + refresh token rotation
 - FR-3 Organizations (one owner) and membership (owner/member roles only — no fine-grained RBAC in v1)
-- FR-4 Basic audit log of auth events (login, token refresh, logout)
+- FR-4 Basic audit log of auth events (login, token refresh, logout). Built Day 15: `auth_audit_log` table (`internal/auth`), a separate table from the org-scoped `activity_events` since auth events have no org/target context to hang off of. No API surface — queried directly in Postgres, per "basic".
 
 ### 3.2 Files & folders
 - FR-5 Nested folders, create/rename/move/delete
 - FR-6 File upload: chunked, resumable, multipart, client-parallelizable
 - FR-7 Content-addressable chunk hashing (SHA-256) with dedup across users at the chunk level
-- FR-8 Checksum verification on upload and on read (integrity check)
+- FR-8 Checksum verification on upload and on read (integrity check). Upload-side: cross-replica ETag verification in `upload.Service.CommitChunk`. Read-side (Day 15): per-chunk SHA-256 re-verification in `processing.Processor.reassemble` (worker's thumbnail-generation path — the one place the server holds reassembled bytes in memory) with fallback to the next replica on a mismatch. The direct-to-client file download path (`file.Service.DownloadPlan`) hands out presigned MinIO URLs and never touches the server, so it remains client-verified only — an architectural fact, not a gap, since nimbus-api never sees those bytes.
 - FR-9 File download, including streamed/ranged download for large files
 - FR-10 Version history per file; restore a prior version
 - FR-11 Trash (soft delete) with restore; permanent delete after retention window or explicit purge
@@ -58,7 +58,7 @@ The storage layer itself is the one deliberately distributed subsystem: multiple
 
 ### 3.7 Frontend
 - FR-25 Next.js + TypeScript + Tailwind web client: auth, folder browser, drag-drop upload with progress, file preview (image/PDF), sharing UI, version history UI, trash UI, activity feed
-- FR-26 Minimal admin view (storage node health, per-org usage) — a page, not a separate service
+- FR-26 Minimal admin view (storage node health, per-org usage) — a page, not a separate service. **Node health only in v1**; per-org usage (`GET /v1/admin/orgs/{orgId}/usage`) was explicitly descoped on Day 15 rather than built, see docs/00-project-state.md "Known issues".
 
 ### 3.8 Observability & ops
 - FR-27 Structured logging (JSON) across the API and worker
@@ -112,3 +112,5 @@ Desktop/CLI sync, real RBAC, gRPC API, OTel tracing + Loki, Terraform + real clo
 ## 8. Definition of done for v1
 
 Every FR in §3 implemented and demoed; the chaos scenario (FR-21) runs reproducibly via a documented script; CI green; README walkthrough lets a stranger clone, `docker compose up`, and exercise the full flow (register → upload chunked file → see it replicated across nodes → kill a node → still download → share a link → see thumbnail + activity feed) in under 10 minutes.
+
+**Day 15 DoD pass result**: every FR/NFR re-checked against the live stack (kind, since it was already running); two real gaps found in a Day 14 cross-check were closed (FR-4, FR-8, both above); FR-26 was explicitly narrowed rather than closed (per-org usage stays undone in v1); NFR-4 was actually measured for the first time (`scripts/load-metadata.js`: p95 20.5ms at 60 concurrent VUs against `GET /v1/orgs/{orgId}/folders`, well under the 200ms bound); NFR-6 went from "CI passes" to "CI passing is actually enforced" (branch protection added on `main` requiring `build-test`/`frontend`/`integration-test`/`docker-build`). The "<10 minutes" claim was reviewed by careful re-read rather than a live stopwatch run (the only environment available was the long-running Day 13 `kind` cluster, not a cold Compose start) — the demo steps themselves are fast, but a genuinely cold `docker compose up --build` (no image/module cache) builds 3 images from source with no pre-published alternative, which is the real variable cost and could push a first-ever run close to or past 10 minutes depending on network/hardware. Not disproven, but not stopwatch-verified either — flagged honestly rather than asserted.

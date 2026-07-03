@@ -1,6 +1,6 @@
 # Implementation Roadmap — Nimbus Storage Platform
 
-Status: current as of Day 14 — Days 1-14 complete, see docs/00-project-state.md for the authoritative status snapshot
+Status: current as of Day 15 — Days 1-15 complete (the full original roadmap), see docs/00-project-state.md for the authoritative status snapshot
 Version: 0.6
 Depends on: all prior docs (01-08)
 
@@ -49,4 +49,4 @@ Ordered so every day ends with something runnable and testable — no long stret
 
 ## Next up
 
-Day 15: buffer / final SRS Definition-of-Done pass. See [docs/next-session.md](next-session.md) for the full handoff.
+Day 15: buffer / final SRS Definition-of-Done pass — DONE. Built FR-4 (auth audit log) and FR-8 (read-side checksum verification), narrowed FR-26 (per-org usage stays a v1 non-goal), measured NFR-4 (p95 20.5ms, see `scripts/load-metadata.js`), enforced NFR-6 via GitHub branch protection on `main`. See docs/00-project-state.md for the full writeup and [docs/next-session.md](next-session.md) for the handoff (no more scheduled roadmap — next session picks from §6's post-v1 ideas per the user).

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -50,7 +51,20 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, Toke
 		return User{}, TokenPair{}, ErrInvalidCredentials
 	}
 	pair, err := s.issueNewSession(ctx, u.ID)
-	return u, pair, err
+	if err != nil {
+		return User{}, TokenPair{}, err
+	}
+	s.recordAuditEvent(ctx, u.ID, AuditEventLogin)
+	return u, pair, nil
+}
+
+// recordAuditEvent is a best-effort side effect (FR-4): a logging hiccup
+// must never fail an otherwise-successful auth operation, matching the
+// upload module's ActivityRecorder convention (upload.Service.CompleteUpload).
+func (s *Service) recordAuditEvent(ctx context.Context, userID, event string) {
+	if err := s.repo.RecordAuditEvent(ctx, userID, event); err != nil {
+		slog.Default().Warn("failed to record auth audit event", "error", err, "event", event)
+	}
 }
 
 func (s *Service) issueNewSession(ctx context.Context, userID string) (TokenPair, error) {
@@ -83,6 +97,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 	if err != nil {
 		return TokenPair{}, err
 	}
+	s.recordAuditEvent(ctx, userID, AuditEventRefresh)
 	return TokenPair{
 		AccessToken:  access,
 		RefreshToken: newRaw,
@@ -93,17 +108,26 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 // Logout revokes the refresh family and, if a still-valid access token was
 // presented, blacklists its jti until natural expiry (docs/04-lld.md §3).
 func (s *Service) Logout(ctx context.Context, refreshToken, accessToken string) error {
+	var userID string
 	if refreshToken != "" {
-		if err := s.repo.RevokeFamilyByTokenHash(ctx, hashToken(refreshToken)); err != nil {
+		uid, err := s.repo.RevokeFamilyByTokenHash(ctx, hashToken(refreshToken))
+		if err != nil {
 			return err
 		}
+		userID = uid
 	}
 	if accessToken != "" {
-		if _, jti, expiresAt, err := s.issuer.verify(accessToken); err == nil {
+		if uid, jti, expiresAt, err := s.issuer.verify(accessToken); err == nil {
+			if userID == "" {
+				userID = uid
+			}
 			if ttl := time.Until(expiresAt); ttl > 0 {
 				s.redis.Set(ctx, blacklistKey(jti), "1", ttl)
 			}
 		}
+	}
+	if userID != "" {
+		s.recordAuditEvent(ctx, userID, AuditEventLogout)
 	}
 	return nil
 }
