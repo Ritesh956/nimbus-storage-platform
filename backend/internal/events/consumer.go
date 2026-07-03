@@ -9,7 +9,10 @@ import (
 )
 
 const (
-	thumbnailConsumerName = "thumbnail-worker"
+	// ThumbnailConsumerName is exported so the worker can label the
+	// nimbus_nats_consumer_pending gauge without this package leaking its
+	// jetstream.Consumer handle.
+	ThumbnailConsumerName = "thumbnail-worker"
 	maxDeliver            = 5
 )
 
@@ -23,16 +26,16 @@ const (
 // not silently dropped: NATS's own max-deliveries advisory would be the
 // natural hook for it, deferred as a roadmap item since it doesn't block
 // the core pipeline this exists to prove works.
-func Subscribe(ctx context.Context, js jetstream.JetStream, handler func(context.Context, UploadCompleted) error) error {
+func Subscribe(ctx context.Context, js jetstream.JetStream, handler func(context.Context, UploadCompleted) error) (jetstream.Consumer, error) {
 	cons, err := js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
-		Durable:       thumbnailConsumerName,
+		Durable:       ThumbnailConsumerName,
 		AckPolicy:     jetstream.AckExplicitPolicy,
 		MaxDeliver:    maxDeliver,
 		FilterSubject: UploadCompletedSubject,
 		BackOff:       []time.Duration{1 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	_, err = cons.Consume(func(msg jetstream.Msg) {
@@ -47,5 +50,8 @@ func Subscribe(ctx context.Context, js jetstream.JetStream, handler func(context
 		}
 		_ = msg.Ack()
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return cons, nil
 }

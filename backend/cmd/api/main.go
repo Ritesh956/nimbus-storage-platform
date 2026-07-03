@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"nimbus/internal/activity"
 	"nimbus/internal/auth"
@@ -195,6 +196,7 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpserver.Liveness)
 	mux.HandleFunc("GET /readyz", ready.Handler())
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	mux.HandleFunc("POST /v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /v1/auth/login", authHandler.Login)
@@ -303,6 +305,7 @@ func run() error {
 		httpserver.RequestID,
 		httpserver.Recoverer(logger),
 		httpserver.RequestLogger(logger),
+		httpserver.Metrics(mux),
 	)
 
 	srv := httpserver.New(":"+cfg.HTTPPort, handler)

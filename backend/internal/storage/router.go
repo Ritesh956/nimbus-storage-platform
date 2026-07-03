@@ -10,6 +10,8 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/redis/go-redis/v9"
+
+	"nimbus/internal/platform/metrics"
 )
 
 const (
@@ -113,9 +115,13 @@ func (rt *Router) Resolve(chunkHash string, n int) ([]NodeID, error) {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
 
-	return rt.ring.SelectReplicas(chunkHash, n, func(id NodeID) bool {
+	ids, err := rt.ring.SelectReplicas(chunkHash, n, func(id NodeID) bool {
 		return rt.health[id] == StatusHealthy
 	})
+	if err != nil {
+		metrics.StoragePlacementFailuresTotal.Inc()
+	}
+	return ids, err
 }
 
 // IsHealthy reports whether id is currently marked healthy — used by
@@ -183,6 +189,12 @@ func (rt *Router) probeOne(ctx context.Context, node StorageNode) {
 	rt.mu.Lock()
 	rt.health[node.ID] = newStatus
 	rt.mu.Unlock()
+
+	healthValue := 0.0
+	if newStatus == StatusHealthy {
+		healthValue = 1.0
+	}
+	metrics.StorageNodeHealthy.WithLabelValues(string(node.ID)).Set(healthValue)
 
 	if ok {
 		now := time.Now()

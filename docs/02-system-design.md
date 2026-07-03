@@ -1,7 +1,7 @@
 # System Design — Nimbus Storage Platform
 
-Status: current as of Day 10 — all decisions below implemented as described
-Version: 0.2
+Status: current as of Day 11 — all decisions below implemented as described
+Version: 0.3
 Depends on: [01-srs.md](01-srs.md)
 
 ## 1. Component diagram
@@ -155,11 +155,12 @@ sequenceDiagram
 ```
 - At-least-once delivery assumed (NATS JetStream with ack); thumbnail generation is idempotent (deterministic output key per version), so redelivery is safe without dedup logic.
 
-## 7. Observability
+## 7. Observability — built Day 11
 
 - Every request gets a request ID propagated through logs (structured JSON, `slog`).
-- Prometheus metrics: HTTP histogram (route, status, latency), upload throughput, chunk placement failures, node health gauge per node, NATS consumer lag.
-- Grafana: one dashboard for API/worker golden signals, one for storage-node health/replication status — this second one is what's on screen during the chaos demo.
+- Prometheus metrics: HTTP histogram (route, status, latency), upload throughput, chunk placement failures, node health gauge per node, NATS consumer lag. See docs/03-hld.md §2 for the exact metric names and label choices.
+- Grafana: one dashboard for API/worker golden signals (`nimbus-golden-signals`), one for storage-node health/replication status (`nimbus-storage-health`) — this second one is what's on screen during the chaos demo. Both auto-provisioned from `deploy/observability/grafana/` — no manual Grafana setup needed after `docker compose up`.
+- The `Storage --> PROM` arrow in the diagram above is satisfied by nimbus's own `nimbus_storage_node_healthy` gauge (emitted by `nimbus-api`/`nimbus-worker`), not by scraping MinIO's built-in metrics endpoint — the latter was never in scope for this day, since the demo cares about the placement/failover decision nimbus itself makes, not raw MinIO server stats.
 
 ## 8. Scalability discussion — from demo-scale to the original 10M user / 100 PB target
 

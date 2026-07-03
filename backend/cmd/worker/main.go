@@ -8,21 +8,32 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"nimbus/internal/activity"
 	"nimbus/internal/events"
 	"nimbus/internal/file"
 	"nimbus/internal/platform/config"
 	"nimbus/internal/platform/db"
+	"nimbus/internal/platform/httpserver"
 	"nimbus/internal/platform/logging"
+	"nimbus/internal/platform/metrics"
 	"nimbus/internal/processing"
 	"nimbus/internal/storage"
 )
+
+// consumerLagPollInterval controls how often the worker refreshes
+// nimbus_nats_consumer_pending from the JetStream consumer's own info call —
+// cheap enough to poll well under the Prometheus scrape_interval (5s, see
+// deploy/observability/prometheus.yml).
+const consumerLagPollInterval = 3 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -95,12 +106,46 @@ func run() error {
 	activitySvc := activity.NewService(activity.NewRepository(pg))
 	processor := processing.NewProcessor(fileRepo, storageRepo, router, activitySvc, logger)
 
-	if err := events.Subscribe(ctx, js, processor.Process); err != nil {
+	consumer, err := events.Subscribe(ctx, js, processor.Process)
+	if err != nil {
 		return fmt.Errorf("subscribe to upload.completed: %w", err)
 	}
+	go pollConsumerLag(ctx, consumer, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", httpserver.Liveness)
+	mux.Handle("GET /metrics", promhttp.Handler())
+	srv := httpserver.New(":"+cfg.HTTPPort, mux)
+	go func() {
+		if err := httpserver.Run(ctx, srv, logger, 5*time.Second); err != nil {
+			logger.Error("worker http server error", "error", err)
+		}
+	}()
 
 	logger.Info("worker ready, consuming upload.completed events")
 	<-ctx.Done()
 	logger.Info("worker shutting down")
 	return nil
+}
+
+// pollConsumerLag refreshes nimbus_nats_consumer_pending from the
+// consumer's own Info() until ctx is cancelled. Polling rather than
+// computing lag from delivered messages keeps this accurate across
+// worker restarts, since Info reflects JetStream's server-side view.
+func pollConsumerLag(ctx context.Context, consumer jetstream.Consumer, logger *slog.Logger) {
+	ticker := time.NewTicker(consumerLagPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			info, err := consumer.Info(ctx)
+			if err != nil {
+				logger.Warn("failed to fetch consumer info for lag metric", "error", err)
+				continue
+			}
+			metrics.NATSConsumerPending.WithLabelValues(events.ThumbnailConsumerName).Set(float64(info.NumPending))
+		}
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"nimbus/internal/events"
 	"nimbus/internal/platform/idgen"
 	"nimbus/internal/platform/logging"
+	"nimbus/internal/platform/metrics"
 	"nimbus/internal/storage"
 )
 
@@ -196,6 +197,8 @@ func (s *Service) CommitChunk(ctx context.Context, u Upload, hash string, sizeBy
 			return err
 		}
 	}
+	metrics.UploadChunksCommittedTotal.Inc()
+	metrics.UploadBytesCommittedTotal.Add(float64(sizeBytes))
 	return nil
 }
 

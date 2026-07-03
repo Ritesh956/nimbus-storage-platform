@@ -1,7 +1,7 @@
 # High-Level Design — Nimbus Storage Platform
 
-Status: current as of Day 10 — see docs/00-project-state.md for the authoritative "what's actually true right now" summary if this drifts again
-Version: 0.2
+Status: current as of Day 11 — see docs/00-project-state.md for the authoritative "what's actually true right now" summary if this drifts again
+Version: 0.3
 Depends on: [02-system-design.md](02-system-design.md)
 
 This doc covers what System Design didn't: internal module boundaries, cross-cutting concerns, and deployment topology. It doesn't re-draw the sequence diagrams already in Phase 3.
@@ -44,6 +44,7 @@ Hexagonal layout: each domain module exposes a small interface consumed by HTTP 
 - **Correlation**: every inbound request gets/propagates an `X-Request-ID`; it's attached to the logger (via context) and forwarded on the NATS event so a log line in the worker can be traced back to the originating upload request.
 - **Graceful shutdown**: SIGTERM drains in-flight requests (context cancellation with a bounded grace period) before exit — required for clean rolling restarts under Kubernetes.
 - **Health/readiness**: `/healthz` (process alive) and `/readyz` (DB + Redis + NATS reachable) — wired to k8s liveness/readiness probes.
+- **Observability** (built Day 11): both `nimbus-api` and `nimbus-worker` expose `/metrics` (Prometheus client_golang). `nimbus_http_request_duration_seconds` is labeled by the *route pattern* the mux matched (e.g. `GET /v1/files/{fileId}`), not the literal path, via `mux.Handler(r)` — keeps cardinality bounded regardless of how many distinct IDs are ever requested. Also emitted: `nimbus_upload_chunks_committed_total`/`nimbus_upload_bytes_committed_total` (recorded once per verified `CommitChunk` — dedup hits, which skip `CommitChunk` entirely, correctly don't recount), `nimbus_storage_placement_failures_total` (incremented inside `Router.Resolve` on the shared code path both upload and thumbnail placement use), `nimbus_storage_node_healthy{node}` (each process's own in-memory health view — `nimbus-api` and `nimbus-worker` each report their own series, distinguished by Prometheus's `job` label, since health state is deliberately not shared, see §4 Failover), and `nimbus_nats_consumer_pending{consumer}` (worker polls its own JetStream consumer's `Info()` every 3s). Prometheus (`deploy/observability/prometheus.yml`) scrapes both processes every 5s; Grafana auto-provisions a datasource plus two dashboards from `deploy/observability/grafana/` on container start — no manual import step.
 
 ## 3. Deployment topology
 
