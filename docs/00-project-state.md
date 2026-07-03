@@ -1,6 +1,6 @@
 # Project State — Nimbus Storage Platform
 
-Status: current as of Day 13 (end of session)
+Status: current as of Day 14 (end of session)
 This is the authoritative "what's actually true right now" snapshot. If any other doc in `docs/` disagrees with this one, this one wins — flag the drift and fix the other doc.
 
 ## What Nimbus is
@@ -33,6 +33,7 @@ A self-hosted, distributed cloud storage platform (Dropbox/Drive-alike) built as
 11. Prometheus instrumentation on `nimbus-api` and `nimbus-worker` (`/metrics`, HTTP histogram by route pattern, upload throughput, storage placement failures, per-node health gauge, NATS consumer lag) + `prometheus`/`grafana` added to Compose + two auto-provisioned Grafana dashboards (golden signals, storage health). See docs/03-hld.md §2.
 12. `scripts/chaos-node-kill.js`: full mid-upload chaos scenario (kill a node after 2 of 7 chunks commit, assert remaining placement avoids it, upload completes, download checksum-matches, node recovers) — 10/10 assertions pass on a real run. Targeted Go integration tests (`internal/auth` refresh-reuse-revokes-family, `internal/upload` concurrent-complete race) against real Postgres/Redis, gated behind `-tags=integration`. `scripts/load-upload.js` (k6): 60 concurrent VUs driving the real chunked-upload flow, 3467 uploads, 0% failures — proves NFR-2. See docs/07-distributed-architecture.md §5.
 13. Frontend containerized (`deploy/Dockerfile.web`, Next.js standalone output) + added to Compose. `deploy/k8s/infra/` (plain manifests: Postgres/Redis/NATS/MinIO×3/Prometheus/Grafana) + `deploy/k8s/helm/nimbus/` (chart we own: api/worker/web, ConfigMap/Secret, HPA stub, migrate Job as a Helm pre-install hook). Deployed to a local `kind` cluster and verified live: migrations ran (16 tables), a full chunked upload completed via real presigned MinIO URLs reachable through kind's NodePort mappings, dedup worked, the worker/NATS thumbnail pipeline produced a `thumbnail_key`, and both Prometheus targets + both Grafana dashboards came up automatically. See docs/03-hld.md §3.
+14. CI hardened: `frontend` job (npm lint+build) and `integration-test` job (real Postgres/Redis service containers, runs the `-tags=integration` suite) added; `docker-build` extended to all four images (api/worker/web/migrate). Chaos/load tests deliberately stay out of CI (scope decision, see "Known issues" below). README got the Mermaid architecture diagram and a numbered demo script, and now documents both the Compose and kind paths. See docs/09-roadmap.md Day 14.
 
 Plus, inserted mid-plan (not in the original roadmap): repo restructured from a single tree into top-level `backend/` + `frontend/` siblings, at the user's request, ahead of Day 10.
 
@@ -43,9 +44,10 @@ Plus, inserted mid-plan (not in the original roadmap): repo restructured from a 
 - **`GET /v1/admin/orgs/{orgId}/usage`** was documented in early API drafts but never implemented. Not on any roadmap day yet.
 - **`internal/admin` module never materialized** — the one admin read that exists (node health) lives directly in `storage.Handler`.
 - **HPA is a stub.** `deploy/k8s/helm/nimbus/templates/hpa.yaml` exists and targets `nimbus-api`, but the kind demo cluster has no metrics-server installed, so `kubectl get hpa` shows `<unknown>` for CPU and it will never actually scale. Scaffold, not a wired autoscaling pipeline — matches docs/03-hld.md §3's framing.
-- **CI is skeleton-only** (lint+build). No unit/integration test stage, no Docker build stage, despite `docs/08-folder-structure.md`'s target layout describing more. Day 14.
-- **CI still doesn't run any of the Day 12/13 additions.** `scripts/chaos-node-kill.js`, the `-tags=integration` Go tests, `scripts/load-upload.js`, and the Docker/Helm builds all exist and pass/deploy locally against the real stack, but none are wired into `.github/workflows/ci.yml` yet — that's Day 14 (CI hardening).
-- **README** has local-run instructions but no architecture diagram or rehearsed demo script yet (Day 14 target) — it also doesn't mention the kind/Helm path yet.
+- **`scripts/chaos-node-kill.js` and `scripts/load-upload.js` are deliberately not in CI** (decided explicitly with the user on Day 14, not an oversight) — both need real multi-container infra (Compose/kind) and real wall-clock time (~40s for the load test alone), a different cost/value trade-off than a per-push gate. They stay manual/local verification tools; `.github/workflows/ci.yml` runs vet/build/unit/integration/lint/docker-build only.
+- **Helm chart isn't in CI either** — `docker-build` builds the four images but nothing runs `helm lint`/`helm template`/a `kind`-based smoke deploy in CI. A real gap if the chart drifts from what actually deploys; not yet on any roadmap day.
+- **FR-4 (auth audit log: login/refresh/logout) doesn't exist.** `internal/activity` only ever records file/org events (`uploaded`, `thumbnail_generated`) — there's no equivalent for auth events. Found during a Day 14 SRS cross-check, not previously documented as a gap. Flag for the Day 15 DoD pass.
+- **FR-8's "checksum verification ... on read" is client-facing only, not server-enforced.** `checksum_sha256` is stored at upload time and returned in API responses (`file.Handler`) so a client *can* verify it after downloading, but nothing on the server re-hashes reassembled/served bytes and rejects a mismatch on the read path. Upload-side verification is real (cross-replica ETag check in `upload.Service.CommitChunk`); read-side is not. Found during the same Day 14 cross-check.
 - **Compose and kind can't run at the same time.** Both bind the same host ports (8080, 3000, 9000/9010/9020, 9090, 3001) by design (so the same URLs work in either environment) — a real constraint, not an oversight, but worth knowing before assuming both are up.
 
 ## Important design decisions (confirmed, deliberate, worth knowing before touching related code)
@@ -62,4 +64,4 @@ Plus, inserted mid-plan (not in the original roadmap): repo restructured from a 
 
 ## Current status
 
-Weeks 1 and 2 of the 3-week roadmap are complete (Days 1-10), and Days 11 (Prometheus + Grafana), 12 (full mid-upload chaos test, targeted integration tests, k6 load test), and 13 (frontend containerized, Kubernetes + Helm, deployed and verified on a real kind cluster) are now done too. All design docs are up to date as of this session. Remaining Week 3 work (CI hardening, final polish) has not started. Next objective is Day 14. See [docs/next-session.md](next-session.md) for the handoff.
+All 3 weeks of the original roadmap now have work landed: Days 1-10 (core product), 11 (Prometheus + Grafana), 12 (chaos/integration/load tests), 13 (frontend containerized, Kubernetes + Helm), and 14 (CI hardening, README diagram + demo script) are done. All design docs are up to date as of this session. Only Day 15 (buffer + final SRS Definition-of-Done pass) remains. See [docs/next-session.md](next-session.md) for the handoff.
