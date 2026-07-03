@@ -1,7 +1,7 @@
 # Implementation Roadmap — Nimbus Storage Platform
 
-Status: current as of Day 10 — Days 1-10 complete, see docs/00-project-state.md for the authoritative status snapshot
-Version: 0.2
+Status: current as of Day 12 — Days 1-12 complete, see docs/00-project-state.md for the authoritative status snapshot
+Version: 0.4
 Depends on: all prior docs (01-08)
 
 Ordered so every day ends with something runnable and testable — no long stretch where nothing works end-to-end. Within a day, features are still built and shown one at a time, verified against a real running stack, before moving on.
@@ -31,12 +31,12 @@ Ordered so every day ends with something runnable and testable — no long stret
 
 **Checkpoint 2**: passed. Product is usable end-to-end in a browser — verified via live Claude Preview MCP sessions (registration → org → upload → download → share → trash → activity), not just code review.
 
-## Week 3 — Observability, chaos proof, deployment, polish — NOT STARTED
+## Week 3 — Observability, chaos proof, deployment, polish — IN PROGRESS
 
 | Day | Build | Deliverable | FRs | Status |
 |---|---|---|---|---|
-| 11 | Prometheus instrumentation (api/worker/storage), Grafana dashboards | Golden-signals dashboard + storage-health dashboard both populated under real traffic | FR-27..29 | **Not started.** `PROM`/`GRAF` appear in the docs/02 component diagram as target-state; no metrics are actually emitted yet, no dashboards exist. This is the correct next objective — see docs/next-session.md. |
-| 12 | `scripts/chaos-node-kill.sh` (full mid-upload scenario), integration test suite, k6 load script | Chaos script passes all assertions (docs/07 §5); load test hits NFR-2 (≥50 concurrent uploads) | FR-21, NFR-2, NFR-5 | **Partially done.** `scripts/smoke-storage.sh` (Day 4) already proves failure detection/recovery at rest; the mid-upload chaos scenario, integration suite, and load test are not built. |
+| 11 | Prometheus instrumentation (api/worker/storage), Grafana dashboards | Golden-signals dashboard + storage-health dashboard both populated under real traffic | FR-27..29 | **Done.** `/metrics` on both `nimbus-api` and `nimbus-worker`; HTTP histogram (route-pattern labeled), upload throughput, placement failures, per-node health gauge, NATS consumer lag (worker polls its own consumer `Info()`). Grafana datasource + both dashboards auto-provisioned via `deploy/observability/grafana/`. Verified against the real running stack: uploaded real files (smoke-upload.js, smoke-thumbnails.js) and confirmed counters moved, and stopped/restarted a live MinIO container to confirm `nimbus_storage_node_healthy` flips within the health TTL — see docs/03-hld.md §2. |
+| 12 | `scripts/chaos-node-kill.js` (full mid-upload scenario), targeted Go integration tests, k6 load script | Chaos script passes all assertions (docs/07 §5); load test hits NFR-2 (≥50 concurrent uploads) | FR-21, NFR-2, NFR-5 | **Done.** Chaos script: 10/10 assertions pass on a real run (docs/07 §5 — built as `.js` not `.sh`, divergence explained there). Integration tests: `internal/auth` (refresh-token reuse revokes the whole family) and `internal/upload` (concurrent `/complete` — exactly one wins), gated behind `-tags=integration` against real Postgres/Redis. Load test: `scripts/load-upload.js` (k6) ramped to 60 concurrent VUs driving the real chunked-upload flow — 3467 uploads completed, 0% failures, all thresholds green. |
 | 13 | K8s infra manifests + Helm chart for api/worker/web, deploy to kind | `helm install` on a local kind cluster, app reachable, probes green | FR-32 | **Not started.** Also would need a `Dockerfile.web` + compose service for the frontend, which doesn't exist yet either. |
 | 14 | CI hardening (lint/unit/integration/docker build on GitHub Actions), README (architecture diagram + demo script), rehearse the chaos demo | CI green on a fresh clone; a stranger can follow the README in <10 min (SRS DoD) | FR-30, FR-33 | **Not started** beyond the Day-1 CI skeleton (lint+build only). |
 | 15 | Buffer: fix whatever broke in day 13-14, final pass against SRS §8 Definition of Done | Checklist complete | — | **Not started.** |
@@ -49,4 +49,4 @@ Ordered so every day ends with something runnable and testable — no long stret
 
 ## Next up
 
-Day 11: Prometheus instrumentation + Grafana dashboards. See [docs/next-session.md](next-session.md) for the full handoff.
+Day 13: Kubernetes manifests + Helm chart, deploy to kind, containerize the frontend. See [docs/next-session.md](next-session.md) for the full handoff.

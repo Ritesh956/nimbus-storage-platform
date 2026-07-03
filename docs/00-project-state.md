@@ -1,6 +1,6 @@
 # Project State — Nimbus Storage Platform
 
-Status: current as of Day 10 (end of session)
+Status: current as of Day 12 (end of session)
 This is the authoritative "what's actually true right now" snapshot. If any other doc in `docs/` disagrees with this one, this one wins — flag the drift and fix the other doc.
 
 ## What Nimbus is
@@ -12,7 +12,7 @@ A self-hosted, distributed cloud storage platform (Dropbox/Drive-alike) built as
 - **`nimbus-api`** (Go, `backend/cmd/api`): modular monolith. Domain modules under `backend/internal/`: `auth`, `org`, `folder`, `file`, `upload`, `storage`, `sharing`, `search`, `activity`. Cross-module boundaries enforced via small interfaces satisfied by adapters in `main.go` — no module reaches into another's Postgres tables.
 - **`nimbus-worker`** (Go, `backend/cmd/worker`): separate binary, same `go.mod`, imports `internal/` packages as a library (not network calls). Subscribes to NATS JetStream, reassembles chunks, generates thumbnails, writes activity. Runs its own `storage.Router` + health-check loop (health state is in-process, not shared).
 - **Frontend** (`frontend/`): Next.js 16.2.10, App Router, TypeScript, Tailwind v4, SWR, localStorage JWT storage. Runs via `npm run dev`, **not containerized**.
-- **Infra** (Docker Compose, `deploy/docker-compose.yml`): Postgres, Redis, NATS, 3× standalone MinIO nodes, `nimbus-api`, `nimbus-worker`. Prometheus/Grafana containers are declared in the design docs' target diagram but **not yet added to compose or instrumented** — Day 11 work.
+- **Infra** (Docker Compose, `deploy/docker-compose.yml`): Postgres, Redis, NATS, 3× standalone MinIO nodes, `nimbus-api`, `nimbus-worker`, `prometheus`, `grafana`. Both app processes expose `/metrics`; Prometheus scrapes both, Grafana auto-provisions its Prometheus datasource plus two dashboards from `deploy/observability/grafana/` on container start.
 - **Storage routing**: SHA-1 hash ring, 128 vnodes/node, Dynamo-style preference list, N=2 replication / W=2 write quorum, 2-state circuit breaker per node (closed/open — no half-open; the 2s health-check cadence already serves as the retry trial).
 - **Upload**: client-side SHA-256 chunking (8 MiB default), presigned PUT direct to MinIO, dedup via `/chunks/check`, cross-replica ETag verification on commit.
 - **Auth**: JWT HS256 (15 min) + rotating opaque refresh tokens (7 day, reuse-detection revokes the whole family), Redis-backed access-token blacklist for logout.
@@ -29,12 +29,13 @@ A self-hosted, distributed cloud storage platform (Dropbox/Drive-alike) built as
 8. Full-text search (Postgres tsvector) + activity feed + NATS publish on upload-complete.
 9. `nimbus-worker`: thumbnail generation (image + PDF placeholder), async activity writes.
 10. Full Next.js frontend: auth, org/folder browser, drag-drop chunked upload with progress, file preview, sharing UI, trash UI, activity feed, admin node-health page. CORS added to the backend to support it.
+11. Prometheus instrumentation on `nimbus-api` and `nimbus-worker` (`/metrics`, HTTP histogram by route pattern, upload throughput, storage placement failures, per-node health gauge, NATS consumer lag) + `prometheus`/`grafana` added to Compose + two auto-provisioned Grafana dashboards (golden signals, storage health). See docs/03-hld.md §2.
+12. `scripts/chaos-node-kill.js`: full mid-upload chaos scenario (kill a node after 2 of 7 chunks commit, assert remaining placement avoids it, upload completes, download checksum-matches, node recovers) — 10/10 assertions pass on a real run. Targeted Go integration tests (`internal/auth` refresh-reuse-revokes-family, `internal/upload` concurrent-complete race) against real Postgres/Redis, gated behind `-tags=integration`. `scripts/load-upload.js` (k6): 60 concurrent VUs driving the real chunked-upload flow, 3467 uploads, 0% failures — proves NFR-2. See docs/07-distributed-architecture.md §5.
 
 Plus, inserted mid-plan (not in the original roadmap): repo restructured from a single tree into top-level `backend/` + `frontend/` siblings, at the user's request, ahead of Day 10.
 
 ## Known issues / gaps (real, not hypothetical — flag before treating any of this as done)
 
-- **No metrics/observability yet.** Prometheus/Grafana appear in design docs as target state only; nothing is instrumented. Day 11.
 - **No rate limiting.** Designed (per-user Redis token bucket) but never built. A real gap if this ever took real traffic.
 - **No DLQ remediation.** Failed NATS deliveries (after 5 retries) are documented as routing to a DLQ subject, but there's no consumer/alerting on it — a human would need to know to look.
 - **`GET /v1/admin/orgs/{orgId}/usage`** was documented in early API drafts but never implemented. Not on any roadmap day yet.
@@ -42,7 +43,7 @@ Plus, inserted mid-plan (not in the original roadmap): repo restructured from a 
 - **Frontend isn't containerized.** No `Dockerfile.web`, not in `docker-compose.yml`. Runs via `npm run dev` against the Compose-hosted backend.
 - **No Kubernetes/Helm yet.** `deploy/k8s/` doesn't exist. Day 13, per roadmap.
 - **CI is skeleton-only** (lint+build). No unit/integration test stage, no Docker build stage, despite `docs/08-folder-structure.md`'s target layout describing more. Day 14.
-- **Chaos test is partial.** `scripts/smoke-storage.sh` (Day 4) proves node-down detection/recovery at rest. It does **not** prove an in-flight upload survives a node dying mid-write — that's the still-unbuilt `scripts/chaos-node-kill.sh`, planned Day 12. See docs/07-distributed-architecture.md §5.
+- **CI still doesn't run any of the Day 12 test suites.** `scripts/chaos-node-kill.js`, the `-tags=integration` Go tests, and `scripts/load-upload.js` all exist and pass locally against the real stack, but none are wired into `.github/workflows/ci.yml` yet — that's Day 14 (CI hardening).
 - **README** has local-run instructions but no architecture diagram or rehearsed demo script yet (Day 14 target).
 
 ## Important design decisions (confirmed, deliberate, worth knowing before touching related code)
@@ -53,7 +54,8 @@ Plus, inserted mid-plan (not in the original roadmap): repo restructured from a 
 - **Standalone MinIO nodes, not MinIO distributed mode** — deliberate, because the replication/placement/failover logic being hand-rolled in `internal/storage` *is* the point of the project. Don't swap in MinIO's built-in clustering as a "simplification"; it would remove the thing being demonstrated.
 - **CORS is wildcard (`NIMBUS_CORS_ORIGIN=*`) by design**, not an oversight — safe here because auth is Bearer-token, not cookie-based, so there's no ambient credential a wildcard origin could steal.
 - **JWT is HS256, not RS256/JWKS** — fine for a single-service monolith; would need to change if `auth` is ever split into its own deployable.
+- **`nimbus_storage_node_healthy` exists as two independent series, one per process** (`backend/internal/storage/router.go` probeOne), not a single shared gauge — a direct consequence of health state being deliberately in-process-only (see the Redis bullet above). `nimbus-api` and `nimbus-worker` each run their own probe loop and each report their own view; Prometheus's `job` label is what tells them apart on the storage-health dashboard. Don't "fix" this into one gauge — that would require introducing the shared-state read the design specifically avoids.
 
 ## Current status
 
-Weeks 1 and 2 of the 3-week roadmap are complete (Days 1-10). All ten design docs are up to date as of this session. Week 3 (observability, full chaos test, Kubernetes, CI hardening, final polish) has not started. Next objective is Day 11. See [docs/next-session.md](next-session.md) for the handoff.
+Weeks 1 and 2 of the 3-week roadmap are complete (Days 1-10), and Days 11 (Prometheus + Grafana) and 12 (full mid-upload chaos test, targeted integration tests, k6 load test) are now done too. All design docs are up to date as of this session. Remaining Week 3 work (Kubernetes, CI hardening, final polish) has not started. Next objective is Day 13. See [docs/next-session.md](next-session.md) for the handoff.
