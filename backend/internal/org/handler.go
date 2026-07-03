@@ -38,6 +38,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListMine serves GET /v1/orgs — the orgs the current user belongs to.
+func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	orgs, err := h.svc.ListForUser(r.Context(), userID)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to list organizations")
+		return
+	}
+	resp := make([]map[string]string, 0, len(orgs))
+	for _, o := range orgs {
+		resp = append(resp, map[string]string{"id": o.ID, "name": o.Name, "owner_user_id": o.OwnerUserID})
+	}
+	httpserver.WriteJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	members, err := h.svc.ListMembers(r.Context(), orgID)

@@ -1,51 +1,52 @@
 # Implementation Roadmap — Nimbus Storage Platform
 
-Status: DRAFT — final design doc before implementation starts
-Version: 0.1
+Status: current as of Day 10 — Days 1-10 complete, see docs/00-project-state.md for the authoritative status snapshot
+Version: 0.2
 Depends on: all prior docs (01-08)
 
-Ordered so every day ends with something runnable and testable — no long stretch where nothing works end-to-end. Within a day, features are still built and shown to you one at a time (per your original instruction: implement one piece, wait for approval, then continue) — this table is the sequence, not permission to batch a whole day into one drop.
+Ordered so every day ends with something runnable and testable — no long stretch where nothing works end-to-end. Within a day, features are still built and shown one at a time, verified against a real running stack, before moving on.
 
-## Week 1 — Foundations, core CRUD, distributed storage layer
+## Week 1 — Foundations, core CRUD, distributed storage layer — ALL COMPLETE
 
-| Day | Build | Deliverable / how it's checked | FRs |
-|---|---|---|---|
-| 1 | Repo scaffold, Docker Compose skeleton (postgres/redis/nats/minio×3 stubs), `platform/config`+`logging`+`httpserver`, migrations wired, CI skeleton (lint+build) | `docker compose up` → `GET /healthz` returns 200 | FR-31 |
-| 2 | `auth` + `org` modules: register/login/refresh/logout, JWT+rotation, org+membership | curl script: register → login → create org → refresh token rotation demonstrated | FR-1..4 |
-| 3 | `folder` + `file` metadata CRUD, trash/restore, full schema migrated | Folder tree built/moved/renamed/trashed/restored via API | FR-5, FR-11 |
-| 4 | `storage` module: hash ring, health-check loop, Redis health table, `/v1/admin/nodes` | Stop a MinIO container → `/v1/admin/nodes` shows it `down` within 10s (NFR-3) | FR-17..20 |
-| 5 | `upload` module: chunk check/init/commit/complete, checksum verify, dedup | Multi-chunk file uploaded end-to-end via test script, chunks confirmed on 2 nodes each | FR-6..9 |
+| Day | Build | Deliverable / how it's checked | FRs | Status |
+|---|---|---|---|---|
+| 1 | Repo scaffold, Docker Compose skeleton (postgres/redis/nats/minio×3 stubs), `platform/config`+`logging`+`httpserver`, migrations wired, CI skeleton (lint+build) | `docker compose up` → `GET /healthz` returns 200 | FR-31 | **Done.** CI workflow itself (`.github/workflows/ci.yml`) was scoped as skeleton-only and never revisited — real gap, see docs/00-project-state.md. |
+| 2 | `auth` + `org` modules: register/login/refresh/logout, JWT+rotation, org+membership | curl script: register → login → create org → refresh token rotation demonstrated | FR-1..4 | **Done.** |
+| 3 | `folder` + `file` metadata CRUD, trash/restore, full schema migrated | Folder tree built/moved/renamed/trashed/restored via API | FR-5, FR-11 | **Done.** |
+| 4 | `storage` module: hash ring, health-check loop, Redis health table, `/v1/admin/nodes` | Stop a MinIO container → `/v1/admin/nodes` shows it `down` within 10s (NFR-3) | FR-17..20 | **Done.** Breaker simplified to 2-state (closed/open) during build — see docs/04-lld.md §1.3. |
+| 5 | `upload` module: chunk check/init/commit/complete, checksum verify, dedup | Multi-chunk file uploaded end-to-end via test script, chunks confirmed on 2 nodes each | FR-6..9 | **Done.** |
 
-**Checkpoint 1** (end of week 1): backend core + the distributed storage layer work and are independently testable via curl/scripts. This is the highest-risk, most load-bearing part of the project — pause here for your review before moving to product surface area.
+**Checkpoint 1**: passed. Distributed storage layer verified independently via `scripts/smoke-storage.sh` before moving to product surface area.
 
-## Week 2 — Product completeness + frontend
+## Week 2 — Product completeness + frontend — ALL COMPLETE
 
-| Day | Build | Deliverable | FRs |
-|---|---|---|---|
-| 6 | Download-plan endpoint, version history + version restore | File uploaded, downloaded, re-uploaded as v2, restored to v1 — verified via checksum | FR-9, FR-10 |
-| 7 | `sharing` module: public links, presigned access, basic ACL | Unauthenticated download via share link works; expired link rejected | FR-12..14 |
-| 8 | `search` (tsvector) + `activity` + NATS publish on upload-complete | Search by name/type/date; activity event appears after upload | FR-15, FR-16, FR-22 |
-| 9 | `nimbus-worker`: NATS consumer, thumbnail generation (image+PDF), activity write | Upload an image/PDF → thumbnail appears without any frontend involvement, via worker logs + storage check | FR-23, FR-24 |
-| 10 | Next.js frontend: auth, folder browser, drag-drop chunked upload w/ progress, preview, sharing UI, trash UI, activity feed, admin node-health page | Full flow exercised in a real browser | FR-25, FR-26 |
+| Day | Build | Deliverable | FRs | Status |
+|---|---|---|---|---|
+| 6 | Download-plan endpoint, version history + version restore | File uploaded, downloaded, re-uploaded as v2, restored to v1 — verified via checksum | FR-9, FR-10 | **Done.** |
+| 7 | `sharing` module: public links, presigned access, basic ACL | Unauthenticated download via share link works; expired link rejected | FR-12..14 | **Done.** |
+| 8 | `search` (tsvector) + `activity` + NATS publish on upload-complete | Search by name/type/date; activity event appears after upload | FR-15, FR-16, FR-22 | **Done.** Search tokenization bug found + fixed (migration 000004); `activity` revised to mostly-synchronous writes, not purely worker-driven — see docs/03-hld.md §1. |
+| 9 | `nimbus-worker`: NATS consumer, thumbnail generation (image+PDF), activity write | Upload an image/PDF → thumbnail appears without any frontend involvement, via worker logs + storage check | FR-23, FR-24 | **Done.** DLQ consumer explicitly not built (documented gap, docs/07 §3). |
+| — | *(inserted, not in original plan)* Restructure repo into `backend/` + `frontend/` top-level split | Requested mid-stream ahead of Day 10 to keep toolchains separate | — | **Done.** |
+| 10 | Next.js frontend: auth, folder browser, drag-drop chunked upload w/ progress, preview, sharing UI, trash UI, activity feed, admin node-health page | Full flow exercised in a real browser (Claude Preview MCP) | FR-25, FR-26 | **Done.** CORS support added (not in original design, browser calls were blocked without it) — see docs/03-hld.md §2. Several real bugs found and fixed during live browser testing (render-time navigation, share-link UX, activity copy, layout clipping) — see docs/00-project-state.md "Known issues" for what's still outstanding vs. fixed. |
 
-**Checkpoint 2** (end of week 2): product is usable end-to-end in a browser by someone who isn't you. Pause for a real walkthrough before moving to ops/polish.
+**Checkpoint 2**: passed. Product is usable end-to-end in a browser — verified via live Claude Preview MCP sessions (registration → org → upload → download → share → trash → activity), not just code review.
 
-## Week 3 — Observability, chaos proof, deployment, polish
+## Week 3 — Observability, chaos proof, deployment, polish — NOT STARTED
 
-| Day | Build | Deliverable | FRs |
-|---|---|---|---|
-| 11 | Prometheus instrumentation (api/worker/storage), Grafana dashboards | Golden-signals dashboard + storage-health dashboard both populated under real traffic | FR-27..29 |
-| 12 | `scripts/chaos-node-kill.sh`, integration test suite, k6 load script | Chaos script passes all assertions (Distributed Arch §5); load test hits NFR-2 (≥50 concurrent uploads) | FR-21, NFR-2, NFR-5 |
-| 13 | K8s infra manifests + Helm chart for api/worker/web, deploy to kind | `helm install` on a local kind cluster, app reachable, probes green | FR-32 |
-| 14 | CI hardening (lint/unit/integration/docker build on GitHub Actions), README (architecture diagram + demo script), rehearse the chaos demo | CI green on a fresh clone; a stranger can follow the README in <10 min (SRS DoD) | FR-30, FR-33 |
-| 15 | Buffer: fix whatever broke in day 13-14, final pass against SRS §8 Definition of Done | Checklist complete | — |
+| Day | Build | Deliverable | FRs | Status |
+|---|---|---|---|---|
+| 11 | Prometheus instrumentation (api/worker/storage), Grafana dashboards | Golden-signals dashboard + storage-health dashboard both populated under real traffic | FR-27..29 | **Not started.** `PROM`/`GRAF` appear in the docs/02 component diagram as target-state; no metrics are actually emitted yet, no dashboards exist. This is the correct next objective — see docs/next-session.md. |
+| 12 | `scripts/chaos-node-kill.sh` (full mid-upload scenario), integration test suite, k6 load script | Chaos script passes all assertions (docs/07 §5); load test hits NFR-2 (≥50 concurrent uploads) | FR-21, NFR-2, NFR-5 | **Partially done.** `scripts/smoke-storage.sh` (Day 4) already proves failure detection/recovery at rest; the mid-upload chaos scenario, integration suite, and load test are not built. |
+| 13 | K8s infra manifests + Helm chart for api/worker/web, deploy to kind | `helm install` on a local kind cluster, app reachable, probes green | FR-32 | **Not started.** Also would need a `Dockerfile.web` + compose service for the frontend, which doesn't exist yet either. |
+| 14 | CI hardening (lint/unit/integration/docker build on GitHub Actions), README (architecture diagram + demo script), rehearse the chaos demo | CI green on a fresh clone; a stranger can follow the README in <10 min (SRS DoD) | FR-30, FR-33 | **Not started** beyond the Day-1 CI skeleton (lint+build only). |
+| 15 | Buffer: fix whatever broke in day 13-14, final pass against SRS §8 Definition of Done | Checklist complete | — | **Not started.** |
 
-## How we'll actually work day to day
+## How we've actually worked, day to day (confirmed pattern, not aspirational)
 
-- Each feature gets built, shown running (curl output, test result, or screenshot), and explicitly approved before the next one starts — same as your original instruction, just now sequenced.
-- If something in week 1 turns out harder than scoped (most likely candidate: the storage router/failover), we slip inside week 1 rather than cut corners on it — it's the centerpiece. Frontend polish (day 10) and dashboard aesthetics (day 11) are the places to compress if time runs short, not the distributed storage layer or the chaos test.
-- I'll flag any point where reality diverges from this plan rather than silently re-scoping.
+- Each feature built, then verified against the real running stack (curl scripts, smoke scripts, or live browser sessions), not just code-reviewed — this caught several real bugs (search tokenization, CORS, nil-slice JSON, render-time navigation) that a read-through wouldn't have.
+- Divergences from the original plan (2-state breaker, no rate limiting, no DLQ remediation, activity writes mostly synchronous, admin module never materialized) are flagged explicitly in docs rather than silently absorbed — see docs/00-project-state.md "Known issues / gaps" for the consolidated list.
+- Frontend is not yet containerized; it runs via `npm run dev` against the Compose-hosted backend. Folding it into Compose is bundled with Day 13, not a separate task.
 
-## Ready to start
+## Next up
 
-All 10 design-phase docs are written (`docs/01` through `docs/09`, plus this roadmap). Say go and I'll start Day 1: repo scaffold + Docker Compose skeleton + platform packages, and show you the running `/healthz` before touching anything else.
+Day 11: Prometheus instrumentation + Grafana dashboards. See [docs/next-session.md](next-session.md) for the full handoff.

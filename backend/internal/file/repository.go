@@ -62,6 +62,30 @@ func (r *Repository) ListInFolder(ctx context.Context, folderID string) ([]File,
 	return out, rows.Err()
 }
 
+// ListTrashed serves the trash UI (docs/09-roadmap.md Day 10's FR-25) — a
+// real gap that existed until now: idx_files_org_deleted was designed for
+// exactly this in the original Day 1 schema ("-- trash listing") but no
+// endpoint ever queried it; restore-by-ID existed with nothing to show a
+// user what they could restore.
+func (r *Repository) ListTrashed(ctx context.Context, orgID string) ([]File, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+fileColumns+` FROM files WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []File
+	for rows.Next() {
+		var f File
+		if err := rows.Scan(&f.ID, &f.OrgID, &f.FolderID, &f.Name, &f.LatestVersionID, &f.CreatedBy, &f.CreatedAt, &f.UpdatedAt, &f.DeletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // Update applies a rename and/or move (to a folder already validated to be
 // in the same org — see Service.Update). name == nil / folderID == nil
 // each leave that field unchanged.

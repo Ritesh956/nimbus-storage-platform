@@ -6,13 +6,15 @@ Design docs (read in order): [docs/01-srs.md](docs/01-srs.md) · [02-system-desi
 
 ## Status
 
-Backend (weeks 1-2 of the [roadmap](docs/09-roadmap.md)) is feature-complete: auth, orgs, folders, files, the distributed storage router (consistent hashing + failover), chunked/resumable/deduplicated upload, versioning + download plans, public sharing, search, activity feed, and `nimbus-worker`'s async thumbnail pipeline. Frontend (Next.js, `frontend/`) starts Day 10.
+Backend (weeks 1-2 of the [roadmap](docs/09-roadmap.md)) is feature-complete: auth, orgs, folders, files, the distributed storage router (consistent hashing + failover), chunked/resumable/deduplicated upload, versioning + download plans, public sharing, search, activity feed, and `nimbus-worker`'s async thumbnail pipeline.
+
+Frontend (Day 10) is up and verified live in a real browser: auth, folder browser, drag-drop chunked upload with progress, download, rename, sharing (including the public unauthenticated `/shares/{token}` page), version history/restore, trash + restore, activity feed, and a live-polling storage-node admin page — dark/purple-glow design system throughout.
 
 ## Repo layout
 
 - `backend/` — the Go module: `cmd/` (api, worker entrypoints), `internal/` (one package per domain), `migrations/`
-- `frontend/` — Next.js/TypeScript/Tailwind web app (Day 10+)
-- `deploy/` — Docker Compose stack + Dockerfiles + observability config, orchestrating both
+- `frontend/` — Next.js/TypeScript/Tailwind web app
+- `deploy/` — Docker Compose stack + Dockerfiles + observability config, orchestrating the backend (the frontend currently runs via `npm run dev`, not yet in Compose — see docs/09-roadmap.md)
 - `docs/` — the design docs (SRS through roadmap), read in order
 - `scripts/` — smoke-test scripts exercising the real running stack end to end
 
@@ -20,7 +22,8 @@ Backend (weeks 1-2 of the [roadmap](docs/09-roadmap.md)) is feature-complete: au
 
 ```sh
 cp deploy/.env.example deploy/.env   # first time only
-make dev                             # docker compose up --build
+make dev                             # docker compose up --build (backend + infra)
+cd frontend && npm install && npm run dev   # frontend, separately
 ```
 
 Then:
@@ -28,8 +31,9 @@ Then:
 curl http://localhost:8080/healthz   # {"status":"ok"}
 curl http://localhost:8080/readyz    # checks postgres/redis/nats connectivity
 ```
+Frontend: http://localhost:3000
 
-`make down` tears the stack down (including volumes).
+`make down` tears the backend stack down (including volumes).
 
 ## Architecture at a glance
 

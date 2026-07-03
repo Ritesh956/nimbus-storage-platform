@@ -98,8 +98,8 @@ func (r *Router) HealthCheckLoop(ctx context.Context) {
 }
 ```
 - Probes run concurrently (one goroutine per node, bounded by node count which is small — no worker pool needed at this scale).
-- Each node has a `breaker` (simple 3-state: closed/open/half-open, homegrown ~30 lines, not a library dependency — small enough to own and explain in an interview). 3 consecutive failures opens the breaker (node marked `StatusDown`, written to Redis with a short TTL so other API replicas converge quickly); a successful probe on a half-open breaker closes it.
-- `r.isHealthy` is a local read of `r.health` refreshed from Redis on a shorter interval than the probe itself (500ms poll or Redis keyspace notification) — this is what keeps `Resolve` fast (no Redis round-trip per chunk resolution).
+- **Corrected from this doc's original sketch**: each node has a `breaker` (`internal/storage/breaker.go`), but it's **2-state (closed/open), not 3-state with half-open** — a deliberate simplification made while implementing (Day 4), not an oversight. A half-open state earns its keep when you need to throttle retry *frequency*; the health-check loop already probes every node on a fixed 2s cadence regardless of state, so there's no separate retry rate to throttle — the next scheduled probe *is* the half-open trial. 3 consecutive failures opens the breaker; the next successful probe closes it immediately.
+- **Also corrected**: `Router.Resolve`/`IsHealthy` read `rt.health`, an in-memory map updated *directly* by the same process's health-check loop — not refreshed from Redis at all. Redis (TTL keys + pub/sub) is written by the health loop for cross-process visibility (the admin endpoint reads Postgres, not Redis; a hypothetical second `nimbus-api` replica could read Redis) but is never read on the hot path. This is what keeps `Resolve` fast — no Redis round-trip per chunk resolution, not even an indirect one via a poll.
 
 ## 2. `upload` module — chunk state machine
 
@@ -150,8 +150,8 @@ Rate limiter and auth run *before* handler-level validation so abuse is rejected
 
 - `Router.Resolve` is called on the hot path (every chunk init/read) and must not block on network I/O — it only ever touches in-memory state (`r.ring`, `r.health`), both kept current by background goroutines. This is the key design property that makes failover fast: the hot path never waits on a health probe.
 - Chunk upload verification (`CommitChunk`) for multiple chunks of one file can run concurrently from the client (parallel upload, per SRS FR-6); server-side, `MarkCommitted` is a single-row upsert keyed on `(upload_id, chunk_hash)` — Postgres handles the concurrency, no application-level locking needed.
-- Worker's NATS consumer uses a bounded goroutine pool (e.g. 4 workers) pulling from a JetStream consumer with explicit ack — acks only after thumbnail write + activity insert both succeed, so a crash mid-processing results in redelivery rather than a silently-lost thumbnail.
+- Worker's NATS consumer (`events.Subscribe`, Day 9) uses JetStream's `Consume` callback with explicit ack — corrected from this doc's original sketch of "a bounded goroutine pool (e.g. 4 workers)": the actual implementation doesn't configure explicit concurrency, it processes deliveries via the callback as JetStream invokes it. Acks only after chunk reassembly + thumbnail storage + `SetThumbnailKey` all succeed, so a crash mid-processing results in redelivery (up to 5 attempts, `[1s,5s,15s,30s,60s]` backoff) rather than a silently-lost thumbnail.
 
-## 6. Open question for sign-off
+## 6. Resolved decisions
 
-HS256 JWT (shared secret, single service) vs RS256/JWKS (asymmetric, ready for a future separate auth service) — HS256 is simpler and matches "modular monolith today"; flagging in case you want the RS256 story for interview purposes even though nothing consumes the public key yet.
+- **HS256 JWT** (not RS256/JWKS) — confirmed and implemented (`internal/auth/jwt.go`). Revisit if auth is ever split into its own service.

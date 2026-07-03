@@ -18,6 +18,22 @@ func NewHandler(svc *Service, members MembershipChecker) *Handler {
 	return &Handler{svc: svc, members: members}
 }
 
+// ListTrashed serves GET /v1/orgs/{orgId}/trash/files — the trash UI's
+// file half (docs/09-roadmap.md Day 10).
+func (h *Handler) ListTrashed(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	files, err := h.svc.ListTrashed(r.Context(), orgID)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to list trashed files")
+		return
+	}
+	resp := make([]map[string]any, 0, len(files))
+	for _, f := range files {
+		resp = append(resp, toResponse(f))
+	}
+	httpserver.WriteJSON(w, http.StatusOK, resp)
+}
+
 // Update distinguishes "field omitted" from "field explicitly present" the
 // same way folder.Handler.Update does — see that comment.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {

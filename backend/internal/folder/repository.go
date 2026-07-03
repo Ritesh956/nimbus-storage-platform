@@ -60,6 +60,14 @@ func (r *Repository) Create(ctx context.Context, orgID string, parentID *string,
 	return f, nil
 }
 
+// CreateRoot satisfies org.FolderCreator exactly (same no-adapter-needed
+// pattern as upload.FileCreator/file.Repository) — a thin wrapper since
+// Create already supports parentID == nil for "root".
+func (r *Repository) CreateRoot(ctx context.Context, orgID, name string) error {
+	_, err := r.Create(ctx, orgID, nil, name)
+	return err
+}
+
 func (r *Repository) Get(ctx context.Context, id string) (Folder, error) {
 	return scanFolder(r.pool.QueryRow(ctx,
 		`SELECT `+folderColumns+` FROM folders WHERE id = $1 AND deleted_at IS NULL`, id))
@@ -84,6 +92,28 @@ func (r *Repository) ListChildren(ctx context.Context, orgID string, parentID *s
 			`SELECT `+folderColumns+` FROM folders
 			 WHERE org_id = $1 AND parent_id = $2 AND deleted_at IS NULL ORDER BY name`, orgID, *parentID)
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Folder
+	for rows.Next() {
+		var f Folder
+		if err := rows.Scan(&f.ID, &f.OrgID, &f.ParentID, &f.Name, &f.CreatedAt, &f.UpdatedAt, &f.DeletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// ListTrashed serves the trash UI (docs/09-roadmap.md Day 10's FR-25) —
+// the folder-side counterpart of file.Repository.ListTrashed; see that
+// method's comment for why this didn't exist until now.
+func (r *Repository) ListTrashed(ctx context.Context, orgID string) ([]Folder, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+folderColumns+` FROM folders WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY updated_at DESC`, orgID)
 	if err != nil {
 		return nil, err
 	}

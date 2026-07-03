@@ -33,6 +33,10 @@ func (s *Service) Get(ctx context.Context, id string) (Folder, error) {
 	return s.repo.Get(ctx, id)
 }
 
+func (s *Service) ListTrashed(ctx context.Context, orgID string) ([]Folder, error) {
+	return s.repo.ListTrashed(ctx, orgID)
+}
+
 func (s *Service) GetAny(ctx context.Context, id string) (Folder, error) {
 	return s.repo.GetAny(ctx, id)
 }

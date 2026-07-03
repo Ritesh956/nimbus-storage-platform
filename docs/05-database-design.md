@@ -1,7 +1,7 @@
 # Database Design — Nimbus Storage Platform
 
-Status: DRAFT
-Version: 0.1
+Status: current as of Day 10 (§2 covers migrations 000001-000004; see docs/00-project-state.md for the live summary)
+Version: 0.2
 Depends on: [02-system-design.md](02-system-design.md) §4, [04-lld.md](04-lld.md) §3
 
 Single Postgres database (per §3 of System Design: strong consistency for the hierarchical/transactional parts). All tables use `uuid` PKs (via `gen_random_uuid()`, `pgcrypto`) except append-only/high-volume tables (`activity_events`) which use `bigserial`, and content-addressed tables (`chunks`, `chunk_locations`) which are keyed by hash/node directly.
@@ -172,14 +172,62 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_family ON refresh_tokens (family_id);
 ```
 
+### 2.1 Added in migration 000002 — upload session bookkeeping (Day 5)
+
+Not anticipated by the original schema above — upload-session/chunk-attempt state needed a home. See `internal/upload/repository.go`.
+
+```sql
+CREATE TYPE upload_status AS ENUM ('in_progress', 'completed', 'aborted');
+
+CREATE TABLE uploads (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    folder_id           uuid NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    name                text NOT NULL,
+    declared_size_bytes bigint NOT NULL,
+    mime_type           text NOT NULL,
+    created_by          uuid NOT NULL REFERENCES users(id),
+    status              upload_status NOT NULL DEFAULT 'in_progress',
+    idempotency_key     text,
+    file_id             uuid REFERENCES files(id),
+    version_id          uuid REFERENCES file_versions(id),
+    created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_uploads_idempotency_key ON uploads (created_by, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE TYPE chunk_attempt_state AS ENUM ('pending', 'presigned', 'committed');
+
+CREATE TABLE upload_chunks (
+    upload_id  uuid NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
+    chunk_hash char(64) NOT NULL,
+    state      chunk_attempt_state NOT NULL DEFAULT 'pending',
+    etags      jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (upload_id, chunk_hash)
+);
+```
+
+### 2.2 Added in migration 000003 — re-upload as a new version (Day 6)
+
+```sql
+ALTER TABLE uploads ADD COLUMN target_file_id uuid REFERENCES files(id);
+```
+Non-null means this upload adds a version to an existing file rather than creating one — see `upload.Service.InitUpload`.
+
+### 2.3 Migration 000004 — search tokenization fix (Day 8)
+
+`files.name_tsv`'s definition in §2 above already reflects the *fixed* version. The original generated column (`to_tsvector('simple', name)`) had a real bug: Postgres's default parser treats a dotted/hyphenated filename like `photo-alpha.png` as one opaque token, so a plain-word search for "photo" never matched it. Migration 000004 rebuilds the column with `regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')` applied first. Found by actually running search (Day 8), not a theoretical concern.
+
 ## 3. Design notes
 
 - **Dedup correctness**: `chunks` is global (not per-org) — the interesting claim ("dedup across users at the chunk level," SRS FR-7) lives entirely in `file_version_chunks` mapping many versions/files/orgs to the same `chunks.hash`. Deleting a file never deletes a `chunks` row directly; a chunk is only eligible for physical GC when no `file_version_chunks` row references it (documented as a manual/roadmap job per SRS §4, not automated in v1).
-- **Trash/restore** (FR-11) is `deleted_at` soft-delete on `folders`/`files`; restore clears it; permanent purge is a scheduled query (`deleted_at < now() - retention_window`) run by a cron-style job in the worker, not a DB trigger — keeps the deletion policy in application code where it's easier to test.
-- **Why a `chunk_locations` join table instead of an array column on `chunks`**: needs to be queried from the `storage_nodes` side too (admin view: "what's on node X," HLD `admin.NodeStatus()`), and needs its own `status` for the degraded-replica case after a failover — an array on `chunks` can't represent that cleanly.
+- **Trash/restore** (FR-11) is `deleted_at` soft-delete on `folders`/`files`; restore clears it. **Permanent purge is manual only** (`DELETE /v1/files/{fileId}/purge`, one row at a time) — an earlier draft of this doc claimed a scheduled cron-style purge job in the worker; that was never built. `NIMBUS_TRASH_RETENTION_DAYS` (default 30) is parsed into config and otherwise unused — a real, flagged gap, not a subtle one.
+- **Why a `chunk_locations` join table instead of an array column on `chunks`**: needs to be queried from the `storage_nodes` side too (`GET /v1/admin/nodes`), and needs its own `status` for the degraded-replica case after a failover — an array on `chunks` can't represent that cleanly.
 - **Search** (FR-15/16) uses Postgres full-text (`tsvector`/GIN) on file name only for v1 — sufficient at this scale; a dedicated search engine (Elasticsearch/Meilisearch) is a roadmap item if fielded search grows beyond name/type/date/size filters.
 - **Folder uniqueness** uses a placeholder nil-UUID sentinel for root's `parent_id` in the partial unique index because Postgres unique indexes treat `NULL` as distinct values (two root folders named "X" would otherwise both be allowed) — a real gotcha worth knowing, not just boilerplate.
 
-## 4. Open question for sign-off
+## 4. Resolved decisions
 
-Retention window for permanent trash purge (FR-11) — defaulting to 30 days unless you want something else (or configurable via `NIMBUS_TRASH_RETENTION_DAYS` env, which is easy either way).
+- Retention window for permanent trash purge (FR-11): defaults to 30 days, configurable via `NIMBUS_TRASH_RETENTION_DAYS`. **Not enforced** — see §3 above; a scheduled purge job is an open roadmap item, not scheduled to any specific day yet.

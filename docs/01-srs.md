@@ -1,10 +1,10 @@
 # Software Requirements Specification — Nimbus Storage Platform
 
-Status: DRAFT — pending sign-off
-Version: 0.1
+Status: current as of Day 10 — requirements below reflect what's implemented; see docs/00-project-state.md for the up-to-date status summary
+Version: 0.2
 Scope window: 2-3 week solo build
 
-> Working name "Nimbus" — trivial to rename later (`s/nimbus/<name>/` across the repo). Say the word if you want something else before we scaffold code.
+> Working name "Nimbus", confirmed and in use across the repo (Go module, Docker images, etc.).
 
 ## 1. Purpose
 

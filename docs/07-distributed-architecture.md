@@ -45,20 +45,20 @@ Event payload: `{event_id, file_id, version_id, org_id, request_id}` — `reques
 - 128 virtual nodes per physical node — enough to keep chunk distribution reasonably even across 3-5 physical nodes without the vnode table becoming unwieldy to reason about in a demo/explanation.
 - Ring rebuild cost: O(physical_nodes × 128 × log) — trivial at this scale; irrelevant until physical node count is in the thousands, noted here only because "how expensive is a rebuild" is a natural follow-up question.
 
-## 5. Chaos test (SRS FR-21 — a real deliverable, not a design claim)
+## 5. Chaos test (SRS FR-21) — status: partially built
 
-`scripts/chaos-node-kill.sh`, run against the Compose stack:
+**Built and verified (Day 4)**: `scripts/smoke-storage.sh` — stops a given MinIO node, asserts `/v1/admin/nodes` reflects `down` within the NFR-3 bound, restarts it, asserts recovery. Run live: down-detection in ~5s, recovery in ~3s, well within the 10s bound.
 
-1. Start a background upload of a multi-chunk (~50 MB, 8 MiB chunks) test file via the CLI/`curl` test client.
-2. Mid-upload (after chunk 2 of ~7 commits), `docker stop nimbus-minio-2`.
-3. Assert the upload still reaches `201` on `/complete` — remaining chunks route to surviving replicas per §1.2 placement, since `Resolve` re-evaluates health on every call.
-4. Immediately download the completed file; assert byte-for-byte match against the original (checksum compare) — proves reads correctly avoided the dead node.
-5. Query `/v1/admin/nodes`; assert `nimbus-minio-2` shows `status: down` within the NFR-3 bound (≤10s from stop to reflected status).
-6. `docker start nimbus-minio-2`; assert status flips back to `healthy` within one health-check interval after it's reachable again.
-7. Print a pass/fail summary per assertion — this script **is** the demo artifact referenced in the SRS Definition of Done, run live or recorded for the README.
+**Not yet built (Day 12, still planned)**: the fuller scenario originally sketched here — kill a node *mid-upload* (not just at rest) and assert the in-flight upload still completes, then verify a checksum-matched download. `scripts/smoke-storage.sh` proves failure detection/recovery; it doesn't yet prove an in-flight write survives a node dying under it. The steps below are the still-accurate plan for that script:
 
-This script is a build deliverable (Phase 10 roadmap), not just documentation — it's what makes "handles node failure" a verified claim instead of an assertion.
+1. Start a background upload of a multi-chunk (~50 MB, 8 MiB chunks) test file.
+2. Mid-upload (after chunk 2 of ~7 commits), `docker stop` one storage node.
+3. Assert the upload still reaches `201` on `/complete` — remaining chunks route to surviving replicas, since `Resolve` re-evaluates health on every call.
+4. Immediately download the completed file; assert byte-for-byte match (checksum compare) — proves reads correctly avoided the dead node.
+5. Query `/v1/admin/nodes`; assert the node shows `down` within the NFR-3 bound.
+6. Restart the node; assert status flips back to `healthy`.
+7. Print a pass/fail summary per assertion.
 
-## 6. Open question for sign-off
+## 6. Resolved decisions
 
-Vnode count (128) and hash truncation (SHA-1→uint32) are implementation defaults with no real tradeoff at this node count — flagging only in case you want a specific number to cite/defend in an interview (e.g. "why 128 and not 256"), otherwise proceeding as-is.
+Vnode count (128) and hash truncation (SHA-1→uint32) — confirmed as implementation defaults, `internal/storage/ring.go`. No real tradeoff at this node count; would only matter citing/defending a specific number at internet scale (docs/02-system-design.md §8).

@@ -20,6 +20,10 @@ type StorageNode struct {
 type Config struct {
 	Env      string // "dev" | "prod"
 	HTTPPort string
+	// CORSOrigin is the browser origin allowed to call this API (see
+	// httpserver.CORS). Defaults to "*" — safe here since auth is a Bearer
+	// token, not cookies (docs/03-hld.md §2).
+	CORSOrigin string
 
 	PostgresDSN string
 	RedisAddr   string
@@ -43,6 +47,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Env:                getEnv("NIMBUS_ENV", "dev"),
 		HTTPPort:           getEnv("NIMBUS_HTTP_PORT", "8080"),
+		CORSOrigin:         getEnv("NIMBUS_CORS_ORIGIN", "*"),
 		PostgresDSN:        os.Getenv("NIMBUS_POSTGRES_DSN"),
 		RedisAddr:          getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
 		NATSURL:            getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),

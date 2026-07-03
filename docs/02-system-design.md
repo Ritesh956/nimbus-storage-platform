@@ -1,7 +1,7 @@
 # System Design — Nimbus Storage Platform
 
-Status: DRAFT — pending sign-off
-Version: 0.1
+Status: current as of Day 10 — all decisions below implemented as described
+Version: 0.2
 Depends on: [01-srs.md](01-srs.md)
 
 ## 1. Component diagram
@@ -178,8 +178,9 @@ This system is built and demonstrated at laptop scale (§NFR in the SRS). Here's
 
 The point of this table: the demo-scale design isn't a toy that happens to look like the real thing — the consistent-hashing/replication/failover mechanism is the same *mechanism* used at scale, just with fewer nodes and a simpler coordination layer. What changes going to scale is coordination infrastructure and storage efficiency, not the core algorithm.
 
-## 9. Open questions for sign-off
+## 9. Resolved decisions (formerly "open questions")
 
-1. Chunk size default (8 MiB) — fine, or do you want it configurable/smaller for faster demo uploads?
-2. Replication factor N=2 / write quorum W=2 — confirms availability trade described in §3, or would you rather demo W=1 (async second replica) to show a different trade-off?
-3. Any objection to the standalone-MinIO-plus-custom-routing decision (§1), given it means less "battle-tested" storage and more custom code to maintain?
+All confirmed and implemented as originally proposed:
+1. Chunk size default 8 MiB (`NIMBUS_CHUNK_SIZE_BYTES`, client-side chunking in `frontend/lib/upload.ts` matches).
+2. Replication factor N=2 / write quorum W=2 (`NIMBUS_REPLICATION_FACTOR`/`NIMBUS_WRITE_QUORUM`), cross-replica ETag check on commit.
+3. Standalone-MinIO-plus-custom-routing — implemented exactly as described in §1; `internal/storage` owns the ring/health/placement logic.

@@ -1,7 +1,7 @@
 # Project Folder Structure — Nimbus Storage Platform
 
-Status: current as of Day 9 (updated when the repo was split into `backend/`/`frontend/` ahead of Day 10)
-Version: 0.2
+Status: current as of Day 10
+Version: 0.3
 Depends on: [03-hld.md](03-hld.md) §1 (module matrix), [03-hld.md](03-hld.md) §3 (deployment topology)
 
 Single monorepo, split into `backend/` (Go module) and `frontend/` (Next.js app) at the top level — split repos would add checkout/versioning overhead with no independent-release benefit at this project's size, but a clean top-level split still keeps each toolchain's config (go.mod, package.json, linters) from tangling with the other's, and makes it obvious at a glance which files a backend-only or frontend-only change should touch.
@@ -41,11 +41,12 @@ nimbus/
 │   ├── test/                          # integration/load tests needing real infra (see Notes)
 │   └── go.mod / go.sum
 │
-├── frontend/                          # Next.js + TypeScript + Tailwind (SRS FR-25/26) — Day 10+
-│   ├── app/                           # routes: auth, folder browser, upload, sharing, trash, activity, admin
-│   ├── components/
-│   ├── lib/                           # API client, chunked-upload logic (client-side chunking/hashing)
-│   └── ...
+├── frontend/                          # Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind v4 — built Day 10
+│   ├── app/                           # routes: /, /login, /register, /app, /app/org/[orgId]/{,folder/[folderId],search,trash,activity,admin}, /shares/[token]
+│   ├── components/                    # AppShell, RequireAuth, UploadDropzone, FileRow, ui/{Button,Card,Input,Badge}
+│   ├── lib/                           # api.ts (typed client, auto-refresh-on-401), upload.ts (chunk/hash/dedup orchestration), auth-context.tsx, tokens.ts, types.ts, format.ts
+│   ├── .env.local                     # NEXT_PUBLIC_API_URL — gitignored
+│   └── package.json / tsconfig.json / next.config.ts
 │
 ├── deploy/                            # orchestrates both backend/ and frontend/ — lives at the top level, not inside either
 │   ├── docker-compose.yml             # full local stack (HLD §3)
@@ -58,8 +59,8 @@ nimbus/
 │       └── grafana/dashboards/        # golden-signals.json, storage-health.json (the chaos-demo dashboard)
 │
 ├── scripts/                           # smoke-test scripts exercising the real running stack end to end
-│   ├── smoke-*.sh / smoke-*.js        # one per day's deliverable (auth, folders, storage, upload, versions, sharing, search/activity, thumbnails)
-│   └── chaos-node-kill.sh             # Day 12 — the FR-21 deliverable
+│   ├── smoke-*.sh / smoke-*.js        # one per day's deliverable built so far (auth, folders, storage, upload, versions, sharing, search/activity, thumbnails)
+│   └── chaos-node-kill.sh             # NOT YET BUILT — planned Day 12, the fuller FR-21 scenario (kill-mid-upload); see docs/07 §5
 │
 ├── .github/workflows/ci.yml           # lint, unit test, docker build (FR-30) — working-directory: backend for Go steps
 ├── Makefile                           # make dev / make build / make test / make lint
@@ -74,3 +75,4 @@ nimbus/
 - **`cmd/api` and `cmd/worker` share all `internal/` packages** — this is what makes the "worker is already extracted as its own process" claim (HLD §1) concrete: they're two binaries built from one module, not one binary with a mode flag. Both independently construct their own `storage.Router` (each needs its own in-process health view — see LLD §5).
 - **Migrations are plain numbered SQL, not an ORM's auto-migration** — the schema in docs/05 is hand-designed (indexes, partial unique constraints, generated columns); an ORM's migration generator would fight some of those choices. Four migrations exist as of Day 9: initial schema, uploads/upload_chunks, upload target_file_id, and a search-tokenization fix (all documented in docs/05 and in each migration's own comment).
 - **`internal/admin` is a reserved, currently-empty package** — the admin-facing reads that exist today (storage node health) live directly in `storage.Handler` since they're a thin read over that module's own data; a real `admin` module would earn its keep once org-usage views or cross-module admin actions land.
+- **`deploy/`, `.github/workflows/ci.yml`, and the Kubernetes/Helm layout under `deploy/k8s/` are still as originally planned, not yet built** — Docker Compose (backend + infra only, not frontend) is the only deployment path that exists today; see docs/03-hld.md §3.

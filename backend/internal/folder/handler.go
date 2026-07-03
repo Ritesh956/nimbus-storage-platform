@@ -19,6 +19,22 @@ func NewHandler(svc *Service, files FileLister, members MembershipChecker) *Hand
 	return &Handler{svc: svc, files: files, members: members}
 }
 
+// ListTrashed serves GET /v1/orgs/{orgId}/trash/folders — the trash UI's
+// folder half (docs/09-roadmap.md Day 10).
+func (h *Handler) ListTrashed(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	folders, err := h.svc.ListTrashed(r.Context(), orgID)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to list trashed folders")
+		return
+	}
+	resp := make([]map[string]any, 0, len(folders))
+	for _, f := range folders {
+		resp = append(resp, toResponse(f))
+	}
+	httpserver.WriteJSON(w, http.StatusOK, resp)
+}
+
 type createFolderRequest struct {
 	ParentID *string `json:"parent_id"`
 	Name     string  `json:"name"`
@@ -37,6 +53,26 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, toResponse(f))
+}
+
+// ListRoot serves GET /v1/orgs/{orgId}/folders — an org's root-level
+// folders (parent_id IS NULL). Added alongside the auto-created "Home"
+// folder (org.Service.Create): without this, a freshly created org had no
+// discoverable entry point for a client to navigate into (every other
+// listing endpoint requires an already-known folder ID) — a real
+// navigation gap, not just a nice-to-have.
+func (h *Handler) ListRoot(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	folders, err := h.svc.ListChildren(r.Context(), orgID, nil)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to list root folders")
+		return
+	}
+	resp := make([]map[string]any, 0, len(folders))
+	for _, f := range folders {
+		resp = append(resp, toResponse(f))
+	}
+	httpserver.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) ListChildren(w http.ResponseWriter, r *http.Request) {

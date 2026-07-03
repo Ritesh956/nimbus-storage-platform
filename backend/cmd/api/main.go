@@ -182,8 +182,12 @@ func run() error {
 	authHandler := auth.NewHandler(authSvc)
 	requireAuth := auth.Middleware(authSvc)
 
+	// folderRepo is built early (ahead of the rest of folder's wiring
+	// below) because org.NewService needs it as a FolderCreator.
+	folderRepo := folder.NewRepository(pg)
+
 	orgRepo := org.NewRepository(pg)
-	orgSvc := org.NewService(orgRepo, userLookupAdapter{repo: authRepo})
+	orgSvc := org.NewService(orgRepo, userLookupAdapter{repo: authRepo}, folderRepo)
 	orgHandler := org.NewHandler(orgSvc)
 	requireMember := org.RequireRole(orgRepo, org.RoleMember)
 	requireOwner := org.RequireRole(orgRepo, org.RoleOwner)
@@ -198,6 +202,7 @@ func run() error {
 	mux.HandleFunc("POST /v1/auth/logout", authHandler.Logout)
 
 	mux.Handle("POST /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.Create)))
+	mux.Handle("GET /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.ListMine)))
 	mux.Handle("GET /v1/orgs/{orgId}/members", requireAuth(requireMember(http.HandlerFunc(orgHandler.ListMembers))))
 	mux.Handle("POST /v1/orgs/{orgId}/members", requireAuth(requireOwner(http.HandlerFunc(orgHandler.AddMember))))
 	mux.Handle("DELETE /v1/orgs/{orgId}/members/{userId}", requireAuth(requireOwner(http.HandlerFunc(orgHandler.RemoveMember))))
@@ -229,7 +234,6 @@ func run() error {
 	mux.Handle("GET /v1/admin/nodes", requireAuth(http.HandlerFunc(storageHandler.ListNodes)))
 
 	fileRepo := file.NewRepository(pg)
-	folderRepo := folder.NewRepository(pg)
 
 	folderSvc := folder.NewService(folderRepo)
 	folderHandler := folder.NewHandler(folderSvc, fileListerAdapter{repo: fileRepo}, members)
@@ -240,6 +244,9 @@ func run() error {
 	requireFileAccess := file.RequireAccess(fileRepo, members)
 
 	mux.Handle("POST /v1/orgs/{orgId}/folders", requireAuth(requireMember(http.HandlerFunc(folderHandler.Create))))
+	mux.Handle("GET /v1/orgs/{orgId}/folders", requireAuth(requireMember(http.HandlerFunc(folderHandler.ListRoot))))
+	mux.Handle("GET /v1/orgs/{orgId}/trash/folders", requireAuth(requireMember(http.HandlerFunc(folderHandler.ListTrashed))))
+	mux.Handle("GET /v1/orgs/{orgId}/trash/files", requireAuth(requireMember(http.HandlerFunc(fileHandler.ListTrashed))))
 	mux.Handle("GET /v1/folders/{folderId}/children", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.ListChildren))))
 	mux.Handle("PATCH /v1/folders/{folderId}", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.Update))))
 	mux.Handle("DELETE /v1/folders/{folderId}", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.Delete))))
@@ -292,6 +299,7 @@ func run() error {
 	// (admin org-usage).
 
 	handler := httpserver.Chain(mux,
+		httpserver.CORS(cfg.CORSOrigin), // outermost: must short-circuit OPTIONS preflight before mux routing
 		httpserver.RequestID,
 		httpserver.Recoverer(logger),
 		httpserver.RequestLogger(logger),
