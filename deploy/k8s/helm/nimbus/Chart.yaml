@@ -1,0 +1,10 @@
+apiVersion: v2
+name: nimbus
+description: >-
+  Helm chart for the services Nimbus owns — nimbus-api, nimbus-worker,
+  nimbus-web. Stateful infra dependencies (Postgres, Redis, NATS, MinIO,
+  Prometheus, Grafana) are intentionally not in this chart — they're
+  plain manifests in ../infra (docs/03-hld.md §5's scope split).
+type: application
+version: 0.1.0
+appVersion: "13"

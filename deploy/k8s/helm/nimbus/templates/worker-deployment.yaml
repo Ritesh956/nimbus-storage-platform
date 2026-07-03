@@ -1,0 +1,51 @@
+# No NodePort: nimbus-worker doesn't serve user traffic, only NATS
+# consumption. The Service exists purely so Prometheus (deploy/k8s/infra)
+# can scrape /metrics at a stable DNS name, same as
+# deploy/observability/prometheus.yml's nimbus-worker:8080 target.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nimbus-worker
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: nimbus-worker
+  template:
+    metadata:
+      labels:
+        app: nimbus-worker
+    spec:
+      containers:
+        - name: nimbus-worker
+          image: {{ .Values.image.worker }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: nimbus-config
+            - secretRef:
+                name: nimbus-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nimbus-worker
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: nimbus-worker
+  ports:
+    - port: 8080

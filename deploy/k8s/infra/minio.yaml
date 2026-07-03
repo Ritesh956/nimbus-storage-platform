@@ -1,0 +1,188 @@
+# Three independent single-replica StatefulSets, deliberately not one
+# StatefulSet with 3 replicas: that would make the pods aware of each
+# other via a headless service and invite MinIO's own distributed mode,
+# which is exactly what this project avoids on purpose (nimbus's own
+# internal/storage module owns placement/replication/failover — see
+# docs/02-system-design.md §1 and docs/00-project-state.md's design
+# decisions). Each node here is standalone, matching
+# deploy/docker-compose.yml's minio-node-1/2/3 services.
+#
+# Each node's S3 API port is a NodePort so presigned PUT/GET URLs (signed
+# against PublicEndpoint) work from a browser on the host — see
+# deploy/k8s/kind-config.yaml, which maps these NodePorts to the same
+# localhost:9000/9010/9020 that docker-compose already uses, so the
+# storage-nodes config string is identical between the two environments
+# apart from the internal (service-DNS) half.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio-node-1
+  namespace: nimbus
+spec:
+  serviceName: minio-node-1
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-node-1
+  template:
+    metadata:
+      labels:
+        app: minio-node-1
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: nimbus
+            - name: MINIO_ROOT_PASSWORD
+              value: nimbus-secret
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-node-1
+  namespace: nimbus
+spec:
+  type: NodePort
+  selector:
+    app: minio-node-1
+  ports:
+    - port: 9000
+      nodePort: 30900
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio-node-2
+  namespace: nimbus
+spec:
+  serviceName: minio-node-2
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-node-2
+  template:
+    metadata:
+      labels:
+        app: minio-node-2
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: nimbus
+            - name: MINIO_ROOT_PASSWORD
+              value: nimbus-secret
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-node-2
+  namespace: nimbus
+spec:
+  type: NodePort
+  selector:
+    app: minio-node-2
+  ports:
+    - port: 9000
+      nodePort: 30901
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio-node-3
+  namespace: nimbus
+spec:
+  serviceName: minio-node-3
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-node-3
+  template:
+    metadata:
+      labels:
+        app: minio-node-3
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: nimbus
+            - name: MINIO_ROOT_PASSWORD
+              value: nimbus-secret
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-node-3
+  namespace: nimbus
+spec:
+  type: NodePort
+  selector:
+    app: minio-node-3
+  ports:
+    - port: 9000
+      nodePort: 30902

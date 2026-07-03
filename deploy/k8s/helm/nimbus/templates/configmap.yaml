@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nimbus-config
+  namespace: {{ .Values.namespace }}
+data:
+  NIMBUS_ENV: {{ .Values.env.NIMBUS_ENV | quote }}
+  NIMBUS_CORS_ORIGIN: {{ .Values.env.NIMBUS_CORS_ORIGIN | quote }}
+  NIMBUS_POSTGRES_DSN: "postgres://nimbus:nimbus@postgres.{{ .Values.namespace }}.svc.cluster.local:5432/nimbus?sslmode=disable"
+  NIMBUS_REDIS_ADDR: "redis.{{ .Values.namespace }}.svc.cluster.local:6379"
+  NIMBUS_NATS_URL: "nats://nats.{{ .Values.namespace }}.svc.cluster.local:4222"
+  NIMBUS_STORAGE_NODES: {{ .Values.env.NIMBUS_STORAGE_NODES | quote }}

@@ -1,0 +1,31 @@
+# kind cluster config for the Day 13 local deploy. extraPortMappings expose
+# NodePorts on localhost, matching the same host ports
+# deploy/docker-compose.yml already uses (8080 for the API, 3000 for the
+# frontend, 9000/9010/9020 for the three MinIO nodes' S3 API) — same URLs
+# work whether the stack is running via Compose or via this kind cluster
+# (not both at once; they'd collide on these host ports).
+#
+# The MinIO mappings are the one that actually matters functionally, not
+# just for convenience: presigned PUT/GET URLs are signed against
+# PublicEndpoint (localhost:900x), which only resolves for a real client
+# (a browser on the host) if these ports are actually reachable there —
+# see CLAUDE.md's footgun notes from Day 12 about this exact class of bug.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+      - containerPort: 30300
+        hostPort: 3000
+      - containerPort: 30900
+        hostPort: 9000
+      - containerPort: 30901
+        hostPort: 9010
+      - containerPort: 30902
+        hostPort: 9020
+      - containerPort: 30909
+        hostPort: 9090
+      - containerPort: 30301
+        hostPort: 3001

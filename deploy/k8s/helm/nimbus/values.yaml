@@ -1,0 +1,38 @@
+namespace: nimbus
+
+image:
+  api: nimbus-api:latest
+  worker: nimbus-worker:latest
+  web: nimbus-web:latest
+  migrate: nimbus-migrate:latest
+  # kind loads images straight into the node's containerd cache (kind load
+  # docker-image) — Never would make it try (and fail) to pull from a
+  # registry that doesn't have these project-local tags.
+  pullPolicy: Never
+
+api:
+  replicas: 1
+  nodePort: 30080
+worker:
+  replicas: 1
+web:
+  replicas: 1
+  nodePort: 30300
+
+env:
+  NIMBUS_ENV: dev
+  NIMBUS_CORS_ORIGIN: "*"
+  # internal|public per node, same convention as deploy/docker-compose.yml
+  # and backend/internal/platform/config: internal endpoints are k8s
+  # Service DNS names (only reachable in-cluster), public endpoints are
+  # the kind extraPortMappings' localhost ports presigned URLs need to be
+  # reachable from a browser on the host (see deploy/k8s/kind-config.yaml).
+  NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+
+# Dev-only defaults, same pattern as deploy/.env's placeholder JWT secret —
+# override with --set or -f a values file for anything beyond a local kind
+# demo.
+secrets:
+  jwtSecret: "dev-only-secret-change-me-please-32chars-min"
+  minioAccessKey: "nimbus"
+  minioSecretKey: "nimbus-secret"

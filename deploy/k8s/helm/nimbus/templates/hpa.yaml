@@ -1,0 +1,25 @@
+# HPA stub, per docs/03-hld.md §3 ("Helm chart we own ... HPA stub"). Needs
+# metrics-server in-cluster to actually scale, which the kind demo cluster
+# doesn't have installed — this exists as the scaffold a real deployment
+# would build on, matching this project's pattern of flagging designed-but-
+# not-fully-wired pieces explicitly (docs/00-project-state.md "Known
+# issues") rather than pretending it does something it doesn't yet.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nimbus-api
+  namespace: {{ .Values.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nimbus-api
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -1,0 +1,37 @@
+FROM node:22-alpine AS deps
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json ./
+# npm install, not npm ci: this lockfile pins optional platform-specific
+# packages (tailwindcss/oxide, lightningcss, unrs resolver bindings) that
+# resolve differently between the Windows host this was generated on and
+# this Linux/musl build image, which trips npm ci's "lockfile out of sync"
+# check even though nothing about the actual dependency versions changed.
+RUN npm install
+
+FROM node:22-alpine AS build
+WORKDIR /src
+COPY --from=deps /src/node_modules ./node_modules
+COPY frontend/ .
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, not
+# read at runtime — this has to be a build arg, not a container env var
+# (see frontend/next.config.ts / docs/03-hld.md §3). Defaults to the same
+# localhost:8080 the app already falls back to (lib/api.ts), which is also
+# where both docker-compose and the kind NodePort mapping expose nimbus-api,
+# so the common case needs no override.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8080
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+RUN npm run build
+
+FROM node:22-alpine AS run
+WORKDIR /app
+ENV NODE_ENV=production
+# Next's standalone server.js only binds 0.0.0.0 if HOSTNAME says so —
+# left unset it can bind localhost-only inside the container, which looks
+# like a hung health check/NodePort from outside.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+COPY --from=build /src/public ./public
+COPY --from=build /src/.next/standalone ./
+COPY --from=build /src/.next/static ./.next/static
+EXPOSE 3000
+ENTRYPOINT ["node", "server.js"]

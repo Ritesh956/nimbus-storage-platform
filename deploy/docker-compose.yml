@@ -103,6 +103,16 @@ services:
       nats: { condition: service_started }
       migrate: { condition: service_completed_successfully }
 
+  nimbus-web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports: ["3000:3000"]
+    depends_on:
+      nimbus-api: { condition: service_started }
+
   prometheus:
     image: prom/prometheus:latest
     volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml"]
@@ -110,7 +120,9 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    ports: ["3000:3000"]
+    # Host 3001, not 3000 — 3000 is the frontend's port (see nimbus-web
+    # below and README), Grafana's container-internal port is still 3000.
+    ports: ["3001:3000"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: nimbus
     volumes:

@@ -1,0 +1,68 @@
+# Minimal manifest, not a hand-rolled HA setup — matches
+# docs/03-hld.md §5's scope decision (infra deps get lightweight
+# manifests; the Helm chart we own is for nimbus-api/worker/web only).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: nimbus
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: nimbus
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: nimbus
+            - name: POSTGRES_USER
+              value: nimbus
+            - name: POSTGRES_PASSWORD
+              value: nimbus
+            # Subdirectory, not the volume root: a fresh PVC's root often
+            # has a lost+found dir from the filesystem format, which trips
+            # initdb's "directory not empty" check.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "nimbus"]
+            periodSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "nimbus"]
+            periodSeconds: 10
+            initialDelaySeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

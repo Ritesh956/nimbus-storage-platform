@@ -1,7 +1,7 @@
 # High-Level Design — Nimbus Storage Platform
 
-Status: current as of Day 11 — see docs/00-project-state.md for the authoritative "what's actually true right now" summary if this drifts again
-Version: 0.3
+Status: current as of Day 13 — see docs/00-project-state.md for the authoritative "what's actually true right now" summary if this drifts again
+Version: 0.4
 Depends on: [02-system-design.md](02-system-design.md)
 
 This doc covers what System Design didn't: internal module boundaries, cross-cutting concerns, and deployment topology. It doesn't re-draw the sequence diagrams already in Phase 3.
@@ -48,13 +48,15 @@ Hexagonal layout: each domain module exposes a small interface consumed by HTTP 
 
 ## 3. Deployment topology
 
-**Local dev (Docker Compose) — built and running.** `deploy/docker-compose.yml`: `nimbus-api`, `nimbus-worker`, `postgres`, `redis`, `nats`, `minio-node-1/2/3` (standalone, not clustered), `prometheus`, `grafana`. This is the primary day-to-day loop for the backend.
+**Local dev (Docker Compose) — built and running.** `deploy/docker-compose.yml`: `nimbus-api`, `nimbus-worker`, `nimbus-web`, `postgres`, `redis`, `nats`, `minio-node-1/2/3` (standalone, not clustered), `prometheus`, `grafana`. This is the primary day-to-day loop for the backend. Grafana moved to host port 3001 (was 3000) when `nimbus-web` was added Day 13 — 3000 is the frontend's port, matching `npm run dev` and the README.
 
-**Frontend is *not* in Docker Compose yet** — runs via `cd frontend && npm run dev` against the Compose-hosted backend (`NEXT_PUBLIC_API_URL` in `frontend/.env.local`). Containerizing it (a `Dockerfile.web` + compose service, matching the pattern of `Dockerfile.api`/`Dockerfile.worker`) is a natural fold-in for Day 13, not yet done.
+**Frontend is now containerized** (Day 13): `deploy/Dockerfile.web`, multi-stage, `output: "standalone"` in `next.config.ts`. `NEXT_PUBLIC_API_URL` is a *build* arg, not a runtime env var — Next.js inlines `NEXT_PUBLIC_*` values into the client bundle at build time (see the Next.js self-hosting guide), so it can't be swapped per-environment the way `NIMBUS_POSTGRES_DSN` etc. can for the Go services. Defaults to `http://localhost:8080`, which is also where both Compose and the kind NodePort mapping expose `nimbus-api`, so the common case needs no override. Added `frontend/app/api/health/route.ts` as a cheap liveness/readiness target so container/k8s probes don't pay for a full page render.
 
-**Kubernetes (kind/minikube) — not started.** Planned scope (Day 13, unbuilt):
-- Our own services (`nimbus-api`, `nimbus-worker`, and eventually the frontend) ship as a **Helm chart we own** — Deployments, Services, ConfigMap/Secret, HPA stub, liveness/readiness probes wired to §2.
-- Stateful infra (Postgres, Redis, NATS, MinIO×3, Prometheus, Grafana) runs via lightweight manifests/StatefulSets in `deploy/k8s/infra/` — not hand-rolled Postgres HA, just enough to stand the dependency up in-cluster for a demo.
+**Kubernetes (kind) — built Day 13.** `deploy/k8s/`:
+- `helm/nimbus/` is the chart we own — `nimbus-api`/`nimbus-worker`/`nimbus-web` Deployments+Services, a ConfigMap+Secret for config, an HPA stub on `nimbus-api` (needs metrics-server, not installed in the demo cluster — exists as scaffold, not a wired autoscaling pipeline), liveness/readiness probes wired to §2's `/healthz`/`/readyz`/`/api/health`, and a `nimbus-migrate` Job as a Helm pre-install/pre-upgrade hook (custom image: `FROM migrate/migrate`, `COPY backend/migrations` — avoids duplicating the SQL into the chart, which Helm's `.Files.Glob` couldn't reach anyway since it's outside the chart directory).
+- `infra/` is the lightweight-manifests half — Postgres and the three MinIO nodes as single-replica StatefulSets (deliberately three independent ones, not one 3-replica StatefulSet, for the same reason Compose runs three standalone MinIO containers rather than MinIO's own distributed mode: nimbus's own placement/replication logic is the point). Redis and NATS are plain Deployments, unvolumed, matching Compose. Prometheus/Grafana read the *same* `deploy/observability/` files Compose does (`apply.sh` generates their ConfigMaps via `kubectl create configmap --from-file` rather than duplicating the content).
+- `kind-config.yaml` maps NodePorts to the same host ports Compose uses (8080 api, 3000 web, 9000/9010/9020 the three MinIO nodes, 9090 Prometheus, 3001 Grafana) — not just for convenience: presigned MinIO PUT/GET URLs are signed against `PublicEndpoint` (`localhost:900x`), which only resolves for a real client (a browser on the host) if those NodePorts are actually reachable there. Compose and kind aren't meant to run at once (same host ports).
+- Verified against a real `kind` cluster, not just `helm template`: migrations ran and created all 16 tables, a full chunked upload (real presigned MinIO PUTs) completed and deduped correctly, the worker/NATS thumbnail pipeline produced a `thumbnail_key`, and both Prometheus targets plus both Grafana dashboards came up automatically.
 - This split is itself the talking point: "I wrote the Helm chart for the services I own; for infra I depend on, I used minimal manifests rather than reinventing StatefulSet operators that already exist as mature open-source charts."
 
 ## 4. Request lifecycle summary (ties §1 modules to System Design's sequence diagrams — matches the real code paths as of Day 10)

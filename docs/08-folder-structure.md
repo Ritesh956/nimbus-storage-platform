@@ -1,7 +1,7 @@
 # Project Folder Structure — Nimbus Storage Platform
 
-Status: current as of Day 10
-Version: 0.3
+Status: current as of Day 13
+Version: 0.4
 Depends on: [03-hld.md](03-hld.md) §1 (module matrix), [03-hld.md](03-hld.md) §3 (deployment topology)
 
 Single monorepo, split into `backend/` (Go module) and `frontend/` (Next.js app) at the top level — split repos would add checkout/versioning overhead with no independent-release benefit at this project's size, but a clean top-level split still keeps each toolchain's config (go.mod, package.json, linters) from tangling with the other's, and makes it obvious at a glance which files a backend-only or frontend-only change should touch.
@@ -49,18 +49,20 @@ nimbus/
 │   └── package.json / tsconfig.json / next.config.ts
 │
 ├── deploy/                            # orchestrates both backend/ and frontend/ — lives at the top level, not inside either
-│   ├── docker-compose.yml             # full local stack (HLD §3)
-│   ├── Dockerfile.api / Dockerfile.worker   # context = repo root, COPY backend/... (see compose build config)
+│   ├── docker-compose.yml             # full local stack incl. frontend (HLD §3)
+│   ├── Dockerfile.api / Dockerfile.worker / Dockerfile.web / Dockerfile.migrate
 │   ├── k8s/
-│   │   ├── infra/                     # minimal manifests: postgres, redis, nats, minio x3, prometheus, grafana
+│   │   ├── kind-config.yaml           # extraPortMappings so NodePorts land on the same localhost ports Compose uses
+│   │   ├── infra/                     # minimal manifests: postgres, redis, nats, minio x3, prometheus, grafana + apply.sh
 │   │   └── helm/nimbus/               # chart we own: api, worker, web (Deployment/Service/ConfigMap/Secret/HPA stub)
 │   └── observability/
-│       ├── prometheus.yml
+│       ├── prometheus.yml             # single source of truth — also read directly by deploy/k8s/infra/apply.sh
 │       └── grafana/dashboards/        # golden-signals.json, storage-health.json (the chaos-demo dashboard)
 │
 ├── scripts/                           # smoke-test scripts exercising the real running stack end to end
 │   ├── smoke-*.sh / smoke-*.js        # one per day's deliverable built so far (auth, folders, storage, upload, versions, sharing, search/activity, thumbnails)
-│   └── chaos-node-kill.sh             # NOT YET BUILT — planned Day 12, the fuller FR-21 scenario (kill-mid-upload); see docs/07 §5
+│   ├── chaos-node-kill.js             # Day 12: the fuller FR-21 scenario (kill mid-upload, not just at rest); see docs/07 §5 for why .js not .sh
+│   └── load-upload.js                 # Day 12: k6 load script, NFR-2 (>=50 concurrent uploads)
 │
 ├── .github/workflows/ci.yml           # lint, unit test, docker build (FR-30) — working-directory: backend for Go steps
 ├── Makefile                           # make dev / make build / make test / make lint
@@ -71,8 +73,8 @@ nimbus/
 
 - **`backend/` and `frontend/` as top-level siblings, not `web/` alongside `cmd/`/`internal/`**: the original single-tree layout worked fine through the backend-only weeks, but once a second toolchain (Node/Next.js) joins, keeping Go's module root uncluttered by `frontend/`'s `node_modules/`/`package.json`/etc. (and vice versa) makes both easier to reason about, lint, and containerize independently. `deploy/` stays at the top level since it orchestrates both.
 - **`internal/` for everything backend, no `pkg/`**: nothing here is meant to be imported by another Go module — there's no "public library" audience.
-- **Unit tests live beside the code they test** (`internal/storage/ring_test.go`, standard Go convention); `backend/test/` is only for tests that need real infrastructure running (integration, load) — the split matters because CI runs them as separate stages.
+- **Unit tests live beside the code they test** (`internal/storage/ring_test.go`, standard Go convention). **Revision (Day 12)**: the Go integration tests also live beside the code they test (`internal/auth/refresh_integration_test.go`, `internal/upload/complete_race_integration_test.go`), gated behind a `//go:build integration` tag, rather than in a separate `backend/test/` as this doc originally sketched — there ended up being only two, both naturally scoped to one package each, so a shared top-level test directory would have added indirection without a real benefit yet. Revisit if a cross-package integration test shows up.
 - **`cmd/api` and `cmd/worker` share all `internal/` packages** — this is what makes the "worker is already extracted as its own process" claim (HLD §1) concrete: they're two binaries built from one module, not one binary with a mode flag. Both independently construct their own `storage.Router` (each needs its own in-process health view — see LLD §5).
 - **Migrations are plain numbered SQL, not an ORM's auto-migration** — the schema in docs/05 is hand-designed (indexes, partial unique constraints, generated columns); an ORM's migration generator would fight some of those choices. Four migrations exist as of Day 9: initial schema, uploads/upload_chunks, upload target_file_id, and a search-tokenization fix (all documented in docs/05 and in each migration's own comment).
 - **`internal/admin` is a reserved, currently-empty package** — the admin-facing reads that exist today (storage node health) live directly in `storage.Handler` since they're a thin read over that module's own data; a real `admin` module would earn its keep once org-usage views or cross-module admin actions land.
-- **`deploy/`, `.github/workflows/ci.yml`, and the Kubernetes/Helm layout under `deploy/k8s/` are still as originally planned, not yet built** — Docker Compose (backend + infra only, not frontend) is the only deployment path that exists today; see docs/03-hld.md §3.
+- **`deploy/k8s/` is built as of Day 13** — a `nimbus-migrate` image (`Dockerfile.migrate`, `FROM migrate/migrate`, `COPY backend/migrations`) runs schema migrations as a Helm pre-install hook, rather than duplicating the SQL files into the chart (Helm's `.Files.Glob` can't reach outside the chart directory) or relying on a host-path volume mount (not portable outside Compose). The Grafana/Prometheus ConfigMaps under `deploy/k8s/infra/` are generated from `deploy/observability/` at apply time (`apply.sh`, `kubectl create configmap --from-file`) rather than duplicated as static YAML, for the same one-source-of-truth reason. `.github/workflows/ci.yml` is still lint+build only — Day 14.

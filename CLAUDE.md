@@ -9,15 +9,27 @@ Full design doc series lives in `docs/01` through `docs/09` (SRS → System Desi
 ## Repo layout
 
 - `backend/` — Go module. `cmd/api` (nimbus-api) and `cmd/worker` (nimbus-worker) are thin entrypoints; all domain logic lives in `internal/` (hexagonal-style: `auth`, `org`, `folder`, `file`, `upload`, `storage`, `sharing`, `search`, `activity`, `platform/*`). See `docs/08-folder-structure.md`.
-- `frontend/` — Next.js 16 (App Router, Turbopack), TypeScript, Tailwind v4. Runs via `npm run dev`, not containerized yet.
-- `deploy/` — `docker-compose.yml` for backend + infra (Postgres, Redis, NATS, 3× MinIO). Frontend is not in Compose.
+- `frontend/` — Next.js 16 (App Router, Turbopack), TypeScript, Tailwind v4. Runs via `npm run dev` day-to-day; also containerized (`deploy/Dockerfile.web`) for Compose and Kubernetes.
+- `deploy/` — `docker-compose.yml` (backend + infra + frontend) and `k8s/` (kind + Helm chart we own for api/worker/web, plain manifests for infra). See "Running locally" below — pick one, not both.
 - `docs/` — design docs, kept in sync with the actual implementation, not aspirational.
 
 ## Running locally
 
+Two ways to run the full stack — they use the same host ports (8080, 3000, 9000/9010/9020, 9090, 3001-or-3000) on purpose, so URLs/bookmarks/`NEXT_PUBLIC_API_URL` stay valid either way, but that also means **don't run both at once**.
+
 ```
-docker compose -f deploy/docker-compose.yml up   # backend + infra
-cd frontend && npm run dev                        # frontend, separate terminal
+# Docker Compose (day-to-day loop)
+docker compose -f deploy/docker-compose.yml up
+cd frontend && npm run dev   # optional: skip nimbus-web and iterate on the frontend directly instead
+
+# Kubernetes (kind), from a stopped Compose stack
+docker compose -f deploy/docker-compose.yml down
+kind create cluster --name nimbus --config deploy/k8s/kind-config.yaml
+docker build -f deploy/Dockerfile.api -t nimbus-api:latest . && docker build -f deploy/Dockerfile.worker -t nimbus-worker:latest . \
+  && docker build -f deploy/Dockerfile.web -t nimbus-web:latest . && docker build -f deploy/Dockerfile.migrate -t nimbus-migrate:latest .
+kind load docker-image nimbus-api:latest nimbus-worker:latest nimbus-web:latest nimbus-migrate:latest --name nimbus
+bash deploy/k8s/infra/apply.sh
+helm install nimbus deploy/k8s/helm/nimbus -n nimbus
 ```
 
 ## Working conventions (read before making changes)
@@ -34,4 +46,8 @@ cd frontend && npm run dev                        # frontend, separate terminal
 - Docker Desktop on this machine has previously left a stale Unix-socket reparse point after being killed/reinstalled. If `docker compose up` fails oddly on infra that previously worked, check for zombie `com.docker.*` processes before assuming a code problem.
 - **This dev machine has a native Windows PostgreSQL 17 install competing with Docker Desktop for host port 5432.** `localhost:5432`/`127.0.0.1:5432`/`[::1]:5432` from the host can silently hit the native install instead of the compose container (wrong credentials, confusing "password authentication failed" errors that look like a code bug but aren't). The Go integration tests (`-tags=integration`, `internal/auth`/`internal/upload`) read `NIMBUS_TEST_POSTGRES_DSN`/`NIMBUS_TEST_REDIS_ADDR` env overrides for exactly this reason — when the host port is contended, run them inside a container on the `nimbus_default` compose network instead (`docker run --network nimbus_default -e NIMBUS_TEST_POSTGRES_DSN=postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable ...`).
 - **Presigned MinIO URLs are signed against `PublicEndpoint` (`http://localhost:900x`), which only resolves correctly from whatever host Docker Compose actually publishes those ports to.** Any load/chaos tool that runs in its own container on the compose network (e.g. k6) can reach `nimbus-api` by service name fine, but the presigned PUT/GET URLs it gets back will fail with connection-refused, because "localhost" inside that container means the container itself. Fix: run the tool with `--network host` and hit `nimbus-api` via `localhost:8080` too (see `scripts/load-upload.js`'s header comment) — don't try to fix it by changing the URL host, that's what the server is correctly handing back for a real (non-containerized) client.
-- No git remote is configured yet (local-only repo) — don't assume `git push` is expected without checking first.
+- **Kubernetes' `command:` field overrides a container's image ENTRYPOINT; Compose's `command:` maps to CMD (args appended to the existing entrypoint).** Porting a Compose `command: server /data --console-address :9001` line (MinIO) straight into a k8s manifest as `command: [...]` breaks it — `exec: "server": executable file not found in $PATH`, because it replaced the image's real entrypoint (`minio`) instead of passing args to it. Use k8s `args:` for anything that was a Compose `command:`.
+- **kubectl.exe (native Windows binary) invoked from Git Bash needs fully-resolved, Windows-style paths.** A literal `..` in a path passed to `kubectl -f`/`--from-file` (e.g. `$DIR/../observability/...`) fails with "system cannot find the path specified" even when the path is genuinely valid — resolve it first with a real `cd` (`cd "$DIR/../observability" && pwd`), and convert to Windows form with Git Bash's `pwd -W` before handing it to kubectl (see `deploy/k8s/infra/apply.sh`'s `to_win` helper). Plain POSIX-style (`/c/Users/...`) argument passing to kubectl.exe is unreliable enough not to depend on.
+- **The root `.dockerignore` matters a lot on this repo** — without one, `docker build -f deploy/Dockerfile.*` with `context: ..` sends the *entire* repo as build context, including `frontend/node_modules` (hundreds of MB), turning a few-second context transfer into several minutes. Keep it excluding `**/node_modules`, `.git`, `frontend/.next`.
+- **`frontend/package-lock.json` can pass `npm ci` on the Windows host but fail it inside a Linux/musl (`node:*-alpine`) build container** — optional platform-specific packages (`@tailwindcss/oxide-*`, `lightningcss-*`, `@unrs/resolver-binding-*`) resolve differently enough between platforms to trip npm's lockfile-sync check even though nothing about the actual dependency versions changed. `deploy/Dockerfile.web` uses `npm install`, not `npm ci`, for exactly this reason.
+- A git remote is configured (`origin` → `github.com/Ritesh956/nimbus-storage-platform`, private, set up Day 11). Commit and push at the end of each day/session's work, but confirm with the user before each push rather than doing it silently.
