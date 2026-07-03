@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: nimbus-api
+    static_configs:
+      - targets: ["nimbus-api:8080"]
+  - job_name: nimbus-worker
+    static_configs:
+      - targets: ["nimbus-worker:8080"]

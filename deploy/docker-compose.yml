@@ -1,0 +1,122 @@
+name: nimbus
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nimbus
+      POSTGRES_USER: nimbus
+      POSTGRES_PASSWORD: nimbus
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nimbus"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js", "-m", "8222"] # JetStream + HTTP monitoring, per docs/07-distributed-architecture.md §3
+    ports: ["4222:4222", "8222:8222"]
+
+  # Storage nodes run standalone (NOT MinIO distributed mode) — Nimbus's own
+  # storage module owns placement/replication/failover. See
+  # docs/02-system-design.md §1 for why.
+  minio-node-1:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nimbus
+      MINIO_ROOT_PASSWORD: nimbus-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio1:/data"]
+
+  minio-node-2:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nimbus
+      MINIO_ROOT_PASSWORD: nimbus-secret
+    ports: ["9010:9000", "9011:9001"]
+    volumes: ["minio2:/data"]
+
+  minio-node-3:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nimbus
+      MINIO_ROOT_PASSWORD: nimbus-secret
+    ports: ["9020:9000", "9021:9001"]
+    volumes: ["minio3:/data"]
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    volumes: ["../backend/migrations:/migrations"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["-path", "/migrations", "-database", "postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable", "up"]
+    restart: "no"
+
+  nimbus-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    env_file: .env
+    environment:
+      NIMBUS_POSTGRES_DSN: postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable
+      NIMBUS_REDIS_ADDR: redis:6379
+      NIMBUS_NATS_URL: nats://nats:4222
+      NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+      NIMBUS_MINIO_ACCESS_KEY: nimbus
+      NIMBUS_MINIO_SECRET_KEY: nimbus-secret
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      nats: { condition: service_started }
+      migrate: { condition: service_completed_successfully }
+
+  nimbus-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    env_file: .env
+    environment:
+      NIMBUS_POSTGRES_DSN: postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable
+      NIMBUS_REDIS_ADDR: redis:6379
+      NIMBUS_NATS_URL: nats://nats:4222
+      NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+      NIMBUS_MINIO_ACCESS_KEY: nimbus
+      NIMBUS_MINIO_SECRET_KEY: nimbus-secret
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+      migrate: { condition: service_completed_successfully }
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: nimbus
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:
+  minio1:
+  minio2:
+  minio3:

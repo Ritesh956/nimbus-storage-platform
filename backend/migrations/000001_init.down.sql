@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS activity_events;
+DROP TABLE IF EXISTS share_links;
+DROP TABLE IF EXISTS chunk_locations;
+DROP TABLE IF EXISTS storage_nodes;
+DROP TABLE IF EXISTS file_version_chunks;
+DROP TABLE IF EXISTS chunks;
+ALTER TABLE IF EXISTS files DROP CONSTRAINT IF EXISTS fk_files_latest_version;
+DROP TABLE IF EXISTS file_versions;
+DROP TABLE IF EXISTS files;
+DROP TABLE IF EXISTS folders;
+DROP TABLE IF EXISTS memberships;
+DROP TABLE IF EXISTS organizations;
+DROP TABLE IF EXISTS users;
+DROP TYPE IF EXISTS chunk_location_status;
+DROP TYPE IF EXISTS node_status;
+DROP TYPE IF EXISTS member_role;

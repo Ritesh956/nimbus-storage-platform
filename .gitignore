@@ -1,0 +1,23 @@
+# Go
+/bin/
+*.test
+*.out
+
+# Env / secrets
+.env
+deploy/.env
+
+# Node / Next.js (frontend/, added Day 10)
+node_modules/
+.next/
+out/
+
+# IDE / OS / tooling
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Local scratch
+*.log
