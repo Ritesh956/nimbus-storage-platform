@@ -40,20 +40,22 @@ export default function SearchPage() {
     <div className="flex flex-col gap-5">
       <PageHeader title="Search" description="Full-text search across every file name in this organization." />
 
-      <form onSubmit={search} className="flex gap-2">
+      <form onSubmit={search} className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <SearchIcon size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-2" />
           <Input placeholder="Search files…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
         </div>
-        <Input
-          placeholder="Type, e.g. image"
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="max-w-36"
-        />
-        <Button type="submit" disabled={loading} className="shrink-0">
-          {loading ? "Searching…" : "Search"}
-        </Button>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Type, e.g. image"
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="sm:max-w-36"
+          />
+          <Button type="submit" disabled={loading} className="shrink-0">
+            {loading ? "Searching…" : "Search"}
+          </Button>
+        </div>
       </form>
       {error && <p className="text-xs text-danger">{error}</p>}
 
@@ -75,8 +77,13 @@ export default function SearchPage() {
                     <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
                       <FileIcon size={15} />
                     </span>
-                    <span className="flex-1 truncate text-sm">{r.name}</span>
-                    <span className="shrink-0 text-xs text-muted-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">{r.name}</span>
+                      <span className="block truncate text-[11px] text-muted-2 sm:hidden">
+                        {formatBytes(r.size_bytes)} · {r.mime_type ?? "unknown"}
+                      </span>
+                    </span>
+                    <span className="hidden shrink-0 text-xs text-muted-2 sm:block">
                       {formatBytes(r.size_bytes)} · {r.mime_type ?? "unknown"} · {formatDate(r.created_at)}
                     </span>
                   </Link>

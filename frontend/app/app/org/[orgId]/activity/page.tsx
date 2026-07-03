@@ -37,7 +37,7 @@ export default function ActivityPage() {
             return (
               <li
                 key={i}
-                className="flex items-center gap-3 border-t border-border/40 px-5 py-3 text-sm first:border-t-0 hover:bg-surface-2/60"
+                className="flex items-center gap-3 border-t border-border/40 px-4 py-3 text-sm first:border-t-0 hover:bg-surface-2/60 sm:px-5"
               >
                 <span
                   className={`grid size-8 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white ${
@@ -46,7 +46,7 @@ export default function ActivityPage() {
                 >
                   {isWorker ? "W" : "M"}
                 </span>
-                <span className="flex-1 truncate">
+                <span className="min-w-0 flex-1 truncate">
                   <span className={isWorker ? "font-medium text-accent-2" : "font-medium text-accent"}>
                     {isWorker ? "nimbus-worker" : "A member"}
                   </span>{" "}

@@ -132,7 +132,7 @@ export function FileRow({ fileId, name, onChanged }: Props) {
     <li className="border-t border-border/40 first:border-t-0">
       <button
         onClick={toggle}
-        className="glow-ring flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-2/60"
+        className="glow-ring flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/60 sm:px-5"
       >
         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
           <FileIcon size={15} />
@@ -145,7 +145,7 @@ export function FileRow({ fileId, name, onChanged }: Props) {
             onChange={(e) => setNewName(e.target.value)}
           />
         ) : (
-          <span className="flex-1 truncate text-sm">{name}</span>
+          <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
         )}
         {versions?.[0] && <span className="text-xs text-muted-2">{formatBytes(versions[0].size_bytes)}</span>}
         <ChevronDownIcon
@@ -155,7 +155,7 @@ export function FileRow({ fileId, name, onChanged }: Props) {
       </button>
 
       {open && (
-        <div className="border-t border-border/40 bg-surface-deep/40 px-5 py-4 text-sm">
+        <div className="border-t border-border/40 bg-surface-deep/40 px-4 py-4 text-sm sm:px-5">
           {error && <p className="mb-3 text-xs text-danger">{error}</p>}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" disabled={busy} onClick={download}>

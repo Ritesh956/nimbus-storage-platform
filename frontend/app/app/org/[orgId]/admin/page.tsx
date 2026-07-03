@@ -53,9 +53,9 @@ export default function AdminPage() {
         <thead>
           <tr>
             <Th>Node</Th>
-            <Th>Endpoint</Th>
+            <Th className="hidden md:table-cell">Endpoint</Th>
             <Th>Status</Th>
-            <Th className="text-right">Last heartbeat</Th>
+            <Th className="hidden text-right sm:table-cell">Last heartbeat</Th>
           </tr>
         </thead>
         <tbody>
@@ -64,7 +64,7 @@ export default function AdminPage() {
               <Td className="font-medium">
                 <span className="flex items-center gap-2.5">
                   <span
-                    className={`grid size-8 place-items-center rounded-lg bg-surface-deep ${
+                    className={`grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep ${
                       n.status === "healthy" ? "text-accent-2" : "text-danger"
                     }`}
                   >
@@ -73,11 +73,11 @@ export default function AdminPage() {
                   {n.id}
                 </span>
               </Td>
-              <Td className="font-mono text-xs text-muted-2">{n.endpoint}</Td>
+              <Td className="hidden font-mono text-xs text-muted-2 md:table-cell">{n.endpoint}</Td>
               <Td>
                 <Badge tone={n.status === "healthy" ? "success" : "danger"}>{n.status}</Badge>
               </Td>
-              <Td className="text-right text-xs text-muted-2">
+              <Td className="hidden text-right text-xs text-muted-2 sm:table-cell">
                 {n.last_heartbeat_at ? timeAgo(n.last_heartbeat_at) : "never seen"}
               </Td>
             </Tr>

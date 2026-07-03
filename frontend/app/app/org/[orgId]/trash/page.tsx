@@ -25,12 +25,12 @@ export default function TrashPage() {
             {folders?.map((f) => (
               <li
                 key={f.id}
-                className="flex items-center gap-3 border-t border-border/40 px-5 py-3 first:border-t-0 hover:bg-surface-2/60"
+                className="flex flex-wrap items-center gap-3 border-t border-border/40 px-4 py-3 first:border-t-0 hover:bg-surface-2/60 sm:px-5"
               >
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-muted-2">
                   <FolderIcon size={15} />
                 </span>
-                <span className="flex-1 truncate text-sm text-muted">{f.name}</span>
+                <span className="min-w-32 flex-1 truncate text-sm text-muted">{f.name}</span>
                 <Button
                   variant="secondary"
                   onClick={async () => {
@@ -56,33 +56,35 @@ export default function TrashPage() {
             {files?.map((f) => (
               <li
                 key={f.id}
-                className="flex items-center gap-3 border-t border-border/40 px-5 py-3 first:border-t-0 hover:bg-surface-2/60"
+                className="flex flex-wrap items-center gap-3 border-t border-border/40 px-4 py-3 first:border-t-0 hover:bg-surface-2/60 sm:px-5"
               >
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-muted-2">
                   <FileIcon size={15} />
                 </span>
-                <span className="flex-1 truncate text-sm text-muted">{f.name}</span>
-                <Button
-                  variant="secondary"
-                  onClick={async () => {
-                    await api.files.restore(f.id);
-                    await mutateFiles();
-                  }}
-                >
-                  <RestoreIcon size={13} />
-                  Restore
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={async () => {
-                    if (!confirm(`Permanently delete "${f.name}"? This cannot be undone.`)) return;
-                    await api.files.purge(f.id);
-                    await mutateFiles();
-                  }}
-                >
-                  <TrashIcon size={13} />
-                  Delete forever
-                </Button>
+                <span className="min-w-32 flex-1 truncate text-sm text-muted">{f.name}</span>
+                <span className="ml-auto flex shrink-0 gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      await api.files.restore(f.id);
+                      await mutateFiles();
+                    }}
+                  >
+                    <RestoreIcon size={13} />
+                    Restore
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={async () => {
+                      if (!confirm(`Permanently delete "${f.name}"? This cannot be undone.`)) return;
+                      await api.files.purge(f.id);
+                      await mutateFiles();
+                    }}
+                  >
+                    <TrashIcon size={13} />
+                    Delete forever
+                  </Button>
+                </span>
               </li>
             ))}
           </ul>

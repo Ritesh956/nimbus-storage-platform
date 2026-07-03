@@ -25,10 +25,19 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
   const pathname = usePathname();
   const router = useRouter();
   const { logout } = useAuth();
+  const items = navItems(orgId);
+  const isActive = (item: { href: string; match?: string }) =>
+    pathname === item.href || (item.match && pathname.startsWith(item.match));
+
+  async function handleLogout() {
+    await logout();
+    router.replace("/login");
+  }
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-border/50 px-4 py-6">
+    <div className="flex min-h-screen flex-col lg:flex-row">
+      {/* Desktop sidebar (≥lg) */}
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-border/50 px-4 py-6 lg:flex">
         <Link href="/app" className="glow-ring mb-8 flex items-center gap-2.5 rounded-lg px-2">
           <LogoMark size={30} />
           <span className="text-[15px] font-semibold tracking-tight">Nimbus</span>
@@ -44,8 +53,8 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
         )}
 
         <nav className="flex flex-1 flex-col gap-1">
-          {navItems(orgId).map((item) => {
-            const active = pathname === item.href || (item.match && pathname.startsWith(item.match));
+          {items.map((item) => {
+            const active = isActive(item);
             const Icon = item.icon;
             return (
               <Link
@@ -68,19 +77,54 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
         </nav>
 
         <button
-          onClick={async () => {
-            await logout();
-            router.replace("/login");
-          }}
+          onClick={handleLogout}
           className="glow-ring mt-4 flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
         >
           <LogoutIcon size={16} className="text-muted-2" />
           Log out
         </button>
       </aside>
+
+      {/* Mobile top bar (<lg) */}
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border/50 bg-background/90 px-4 py-3 backdrop-blur lg:hidden">
+        <Link href="/app" className="glow-ring flex items-center gap-2 rounded-lg">
+          <LogoMark size={26} />
+          <span className="text-[15px] font-semibold tracking-tight">Nimbus</span>
+        </Link>
+        <div className="flex items-center gap-2">
+          {orgName && <span className="max-w-36 truncate text-xs text-muted">{orgName}</span>}
+          <button
+            onClick={handleLogout}
+            title="Log out"
+            className="glow-ring rounded-lg p-2 text-muted-2 transition-colors hover:text-foreground"
+          >
+            <LogoutIcon size={16} />
+          </button>
+        </div>
+      </header>
+
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-8 py-8">{children}</div>
+        <div className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:py-8">{children}</div>
       </main>
+
+      {/* Mobile bottom tab bar (<lg) */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+        {items.map((item) => {
+          const active = isActive(item);
+          const Icon = item.icon;
+          return (
+            <Link key={item.href} href={item.href} className="relative flex flex-col items-center gap-1 py-2.5">
+              {active && (
+                <span className="gradient-primary absolute left-1/2 top-0 h-[2.5px] w-8 -translate-x-1/2 rounded-full" />
+              )}
+              <Icon size={18} className={active ? "text-accent" : "text-muted-2"} />
+              <span className={`text-[10px] font-medium ${active ? "text-foreground" : "text-muted-2"}`}>
+                {item.label}
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }
