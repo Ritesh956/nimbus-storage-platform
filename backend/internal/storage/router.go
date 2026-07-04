@@ -124,6 +124,17 @@ func (rt *Router) Resolve(chunkHash string, n int) ([]NodeID, error) {
 	return ids, err
 }
 
+// Candidates returns every configured node in ring preference order for
+// key, ignoring health — for locating an already-stored object whose exact
+// node isn't recorded anywhere (e.g. a worker-placed thumbnail): the writer
+// stored it on the first node of this same list that was healthy at write
+// time, so a reader should try each in turn.
+func (rt *Router) Candidates(key string) ([]NodeID, error) {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return rt.ring.SelectReplicas(key, len(rt.nodes), func(NodeID) bool { return true })
+}
+
 // IsHealthy reports whether id is currently marked healthy — used by
 // callers (e.g. file's download-plan) that need to order already-recorded
 // replica locations rather than make a fresh placement decision.

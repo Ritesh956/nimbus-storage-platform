@@ -22,6 +22,9 @@ export interface FolderNode {
 export interface FileSummary {
   id: string;
   name: string;
+  size_bytes: number | null;
+  mime_type: string | null;
+  has_thumbnail: boolean;
 }
 
 export interface FileNode {

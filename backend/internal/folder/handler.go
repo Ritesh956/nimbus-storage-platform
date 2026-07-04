@@ -95,9 +95,29 @@ func (h *Handler) ListChildren(w http.ResponseWriter, r *http.Request) {
 	}
 	fileResp := make([]map[string]any, 0, len(files))
 	for _, fl := range files {
-		fileResp = append(fileResp, map[string]any{"id": fl.ID, "name": fl.Name})
+		fileResp = append(fileResp, map[string]any{
+			"id": fl.ID, "name": fl.Name,
+			"size_bytes": fl.SizeBytes, "mime_type": fl.MimeType, "has_thumbnail": fl.HasThumbnail,
+		})
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"folders": folderResp, "files": fileResp})
+}
+
+// Path serves GET /v1/folders/{folderId}/path — the ancestor chain from
+// the root folder down to this one (inclusive), for breadcrumbs.
+func (h *Handler) Path(w http.ResponseWriter, r *http.Request) {
+	f, _ := FolderFromContext(r.Context())
+
+	chain, err := h.svc.Ancestors(r.Context(), f.ID)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to load folder path")
+		return
+	}
+	resp := make([]map[string]string, 0, len(chain))
+	for _, e := range chain {
+		resp = append(resp, map[string]string{"id": e.ID, "name": e.Name})
+	}
+	httpserver.WriteJSON(w, http.StatusOK, resp)
 }
 
 // Update distinguishes "field omitted" from "field explicitly null" (for

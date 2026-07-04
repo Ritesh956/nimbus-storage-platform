@@ -1,6 +1,6 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of Day 15** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found.
+Status: **current as of the Tier 1 backlog session (post-Day-15)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4).
 Version: 0.3
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
@@ -53,7 +53,8 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 |---|---|---|---|---|
 | POST | `/v1/orgs/{orgId}/folders` | `{parent_id, name}` | 201 `{id, org_id, parent_id, name, created_at, updated_at}` | |
 | GET | `/v1/orgs/{orgId}/folders` | — | 200 `[{id, org_id, parent_id, name, created_at, updated_at}]` | root-level (`parent_id IS NULL`) folders; added Day 10 — every other listing endpoint needs an already-known folder ID |
-| GET | `/v1/folders/{folderId}/children` | — | 200 `{folders: [...], files: [{id, name}]}` | file entries are name-only; fetch `/v1/files/{fileId}/versions` for size/mime |
+| GET | `/v1/folders/{folderId}/children` | — | 200 `{folders: [...], files: [{id, name, size_bytes, mime_type, has_thumbnail}]}` | file entries carry latest-version display metadata (Tier 1 session — was name-only) so the browser renders rows, and knows to fetch thumbnails, without per-file round-trips |
+| GET | `/v1/folders/{folderId}/path` | — | 200 `[{id, name}]` | ancestor chain root→self inclusive, for breadcrumbs (Tier 1 session) |
 | PATCH | `/v1/folders/{folderId}` | `{name?, parent_id?}` | 200 folder | rename/move, one transaction; rejects cycles |
 | DELETE | `/v1/folders/{folderId}` | — | 204 | soft delete (trash), cascades to descendant folders + files |
 | POST | `/v1/folders/{folderId}/restore` | — | 200 folder | undoes trash, cascades to what was trashed with it |
@@ -64,6 +65,7 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 | DELETE | `/v1/files/{fileId}/purge` | — | 204 | permanent; 400 if not already trashed |
 | GET | `/v1/orgs/{orgId}/trash/files` | — | 200 `[{id, org_id, folder_id, name, ...}]` | added Day 10 |
 | GET | `/v1/files/{fileId}/versions` | — | 200 `[{id, size_bytes, checksum_sha256, mime_type, created_at}]` | newest first |
+| GET | `/v1/files/{fileId}/thumbnail` | — | 200 `{targets: [url, ...]}` | presigned GETs for the latest version's worker-generated thumbnail, ring-preference order healthy-first; 404 until the worker has produced one. Unlike chunks, a thumbnail's node isn't recorded in Postgres — the client walks the targets like a download plan's (Tier 1 session) |
 | GET | `/v1/files/{fileId}/versions/{versionId}/download-plan` | — | 200 see §6 | |
 | POST | `/v1/files/{fileId}/versions/{versionId}/restore` | — | 200 file | repoints `latest_version_id`, no bytes duplicated |
 

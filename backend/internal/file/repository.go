@@ -43,21 +43,29 @@ func (r *Repository) GetAny(ctx context.Context, id string) (File, error) {
 	return scanFile(r.pool.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE id = $1`, id))
 }
 
-func (r *Repository) ListInFolder(ctx context.Context, folderID string) ([]File, error) {
+// ListInFolder joins each file with its latest version's display metadata
+// (size, mime, thumbnail presence) so the file browser can render a row —
+// including whether to fetch a thumbnail — without a per-file round-trip.
+func (r *Repository) ListInFolder(ctx context.Context, folderID string) ([]ListEntry, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+fileColumns+` FROM files WHERE folder_id = $1 AND deleted_at IS NULL ORDER BY name`, folderID)
+		`SELECT f.id, f.org_id, f.folder_id, f.name, f.latest_version_id, f.created_by, f.created_at, f.updated_at, f.deleted_at,
+		        v.size_bytes, v.mime_type, v.thumbnail_key IS NOT NULL
+		 FROM files f
+		 LEFT JOIN file_versions v ON v.id = f.latest_version_id
+		 WHERE f.folder_id = $1 AND f.deleted_at IS NULL ORDER BY f.name`, folderID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []File
+	var out []ListEntry
 	for rows.Next() {
-		var f File
-		if err := rows.Scan(&f.ID, &f.OrgID, &f.FolderID, &f.Name, &f.LatestVersionID, &f.CreatedBy, &f.CreatedAt, &f.UpdatedAt, &f.DeletedAt); err != nil {
+		var e ListEntry
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.FolderID, &e.Name, &e.LatestVersionID, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt, &e.DeletedAt,
+			&e.SizeBytes, &e.MimeType, &e.HasThumbnail); err != nil {
 			return nil, err
 		}
-		out = append(out, f)
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }

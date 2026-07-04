@@ -45,6 +45,10 @@ func (s *Service) ListChildren(ctx context.Context, orgID string, parentID *stri
 	return s.repo.ListChildren(ctx, orgID, parentID)
 }
 
+func (s *Service) Ancestors(ctx context.Context, folderID string) ([]PathEntry, error) {
+	return s.repo.Ancestors(ctx, folderID)
+}
+
 // Update renames and/or moves folder. See Repository.Update for the
 // pointer-to-pointer semantics of newParentID.
 func (s *Service) Update(ctx context.Context, current Folder, name *string, newParentID **string) (Folder, error) {

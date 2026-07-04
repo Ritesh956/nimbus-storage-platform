@@ -84,7 +84,7 @@ func (a fileListerAdapter) ListInFolder(ctx context.Context, folderID string) ([
 	}
 	out := make([]folder.FileSummary, len(files))
 	for i, f := range files {
-		out[i] = folder.FileSummary{ID: f.ID, Name: f.Name}
+		out[i] = folder.FileSummary{ID: f.ID, Name: f.Name, SizeBytes: f.SizeBytes, MimeType: f.MimeType, HasThumbnail: f.HasThumbnail}
 	}
 	return out, nil
 }
@@ -250,6 +250,7 @@ func run() error {
 	mux.Handle("GET /v1/orgs/{orgId}/trash/folders", requireAuth(requireMember(http.HandlerFunc(folderHandler.ListTrashed))))
 	mux.Handle("GET /v1/orgs/{orgId}/trash/files", requireAuth(requireMember(http.HandlerFunc(fileHandler.ListTrashed))))
 	mux.Handle("GET /v1/folders/{folderId}/children", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.ListChildren))))
+	mux.Handle("GET /v1/folders/{folderId}/path", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.Path))))
 	mux.Handle("PATCH /v1/folders/{folderId}", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.Update))))
 	mux.Handle("DELETE /v1/folders/{folderId}", requireAuth(requireFolderAccess(http.HandlerFunc(folderHandler.Delete))))
 	mux.Handle("POST /v1/folders/{folderId}/restore", requireAuth(http.HandlerFunc(folderHandler.Restore)))
@@ -258,6 +259,7 @@ func run() error {
 	mux.Handle("DELETE /v1/files/{fileId}", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.Delete))))
 	mux.Handle("POST /v1/files/{fileId}/restore", requireAuth(http.HandlerFunc(fileHandler.Restore)))
 	mux.Handle("DELETE /v1/files/{fileId}/purge", requireAuth(http.HandlerFunc(fileHandler.Purge)))
+	mux.Handle("GET /v1/files/{fileId}/thumbnail", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.Thumbnail))))
 	mux.Handle("GET /v1/files/{fileId}/versions", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.ListVersions))))
 	mux.Handle("GET /v1/files/{fileId}/versions/{versionId}/download-plan", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.DownloadPlan))))
 	mux.Handle("POST /v1/files/{fileId}/versions/{versionId}/restore", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.RestoreVersion))))

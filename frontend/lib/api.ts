@@ -4,6 +4,7 @@ import type {
   ChunkTarget,
   DownloadPlan,
   FileNode,
+  FileSummary,
   FileVersion,
   FolderNode,
   Member,
@@ -124,7 +125,8 @@ export const api = {
     create: (orgId: string, name: string, parentId: string | null) =>
       request<FolderNode>(`/v1/orgs/${orgId}/folders`, { method: "POST", body: json({ name, parent_id: parentId }) }),
     children: (folderId: string) =>
-      request<{ folders: FolderNode[]; files: { id: string; name: string }[] }>(`/v1/folders/${folderId}/children`),
+      request<{ folders: FolderNode[]; files: FileSummary[] }>(`/v1/folders/${folderId}/children`),
+    path: (folderId: string) => request<{ id: string; name: string }[]>(`/v1/folders/${folderId}/path`),
     rename: (folderId: string, name: string) =>
       request<FolderNode>(`/v1/folders/${folderId}`, { method: "PATCH", body: json({ name }) }),
     move: (folderId: string, parentId: string | null) =>
@@ -142,6 +144,7 @@ export const api = {
     restore: (fileId: string) => request<FileNode>(`/v1/files/${fileId}/restore`, { method: "POST" }),
     purge: (fileId: string) => request(`/v1/files/${fileId}/purge`, { method: "DELETE" }),
     versions: (fileId: string) => request<FileVersion[]>(`/v1/files/${fileId}/versions`),
+    thumbnail: (fileId: string) => request<{ targets: string[] }>(`/v1/files/${fileId}/thumbnail`),
     downloadPlan: (fileId: string, versionId: string) =>
       request<DownloadPlan>(`/v1/files/${fileId}/versions/${versionId}/download-plan`),
     restoreVersion: (fileId: string, versionId: string) =>

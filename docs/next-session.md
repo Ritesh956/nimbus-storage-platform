@@ -1,20 +1,18 @@
 # Handoff — Next Session
 
-Written at the end of the session that completed Day 15 (SRS Definition-of-Done pass — the last day on the original roadmap). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
+Updated at the end of the Tier 1 backlog session (2026-07-05). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
 
-## Next objective: the agreed feature backlog (user-approved, start here)
+## Next objective: continue the agreed feature backlog
 
-All 15 roadmap days are done, plus a post-roadmap session that restyled the frontend to Dashdark X, made it fully responsive, and deployed it (frontend only) to Vercel at https://nimbus-storage-platform.vercel.app.
+All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 1 session. **Tier 1 (#1–#6) is complete and verified live** — see docs/00-project-state.md item 17. Remaining agreed sequence: **#8 → #7 → #10** ("safe to expose" → "best interview story"). Full backlog as presented and accepted:
 
-At the end of that session the user asked for a prioritized list of practical, free improvements and said they'd start on it in a new session. **The agreed starting sequence is: #1 → #2 → #8 → #7 → #10** ("product feels finished" → "safe to expose" → "best interview story"). Full backlog as presented and accepted:
-
-**Tier 1 — backend already does it, UI doesn't show it (cheapest wins)**
-1. **Show thumbnails in the UI** — the worker already generates + stores thumbnails (`file_versions.thumbnail_key`), but the frontend never displays them. Needs one presigned-GET endpoint for the thumbnail key + rendering in the file row and a click-to-preview modal. Highest visible-impact item in the repo.
-2. **Org members UI** — add/remove/list members is fully built API-side (owner-gated); there is no screen for it. A Members page with invite-by-email + role pills, Dashdark table pattern.
-3. **Move files/folders UI** — `PATCH` supports moves with cycle detection; UI only renames. "Move to…" dialog with folder picker.
-4. **Search filters + pagination UI** — backend supports date/size/owner filters and cursors; UI exposes only `type`. Filter chips + "Load more".
-5. **Share expiry in the UI** — API accepts `expires_at`; share dialog never offers it. Expiry dropdown (1h/1d/7d/never).
-6. **Breadcrumbs** — only a jump-to-root link exists today; needs an ancestors query + trail.
+**Tier 1 — backend already does it, UI doesn't show it — ✅ ALL DONE (2026-07-05 session)**
+1. ~~**Show thumbnails in the UI**~~ — done: `GET /v1/files/{fileId}/thumbnail` (presigned targets, ring-preference healthy-first), `has_thumbnail`/size/mime on the children listing, FileRow thumb + preview modal.
+2. ~~**Org members UI**~~ — done: `/app/org/{orgId}/members` page, invite-by-email + role pills + remove, 6-item nav.
+3. ~~**Move files/folders UI**~~ — done: shared `MoveDialog` drill-down picker on file rows and folder rows.
+4. ~~**Search filters + pagination UI**~~ — done: type/owner/date/size panel, removable chips, cursor "Load more".
+5. ~~**Share expiry in the UI**~~ — done: 1h/1d/7d/never dropdown; expiry proven end-to-end (forced past-expiry in DB → public page refuses).
+6. ~~**Breadcrumbs**~~ — done: `GET /v1/folders/{folderId}/path` + trail in the folder view.
 
 **Tier 2 — blockers before the VPS go-public plan**
 7. **Rate limiting** — per-user/per-IP Redis token bucket middleware (designed in docs/04-lld.md, never built).
@@ -32,6 +30,14 @@ At the end of that session the user asked for a prioritized list of practical, f
 15. **TOTP 2FA** — standard library, pairs with the existing auth_audit_log.
 
 After (or alongside) the backlog, the other open thread is the **deferred go-public plan**: the user wanted the backend on a VPS but held off since the VPS account/payment is theirs to create. Full agreed recipe is in docs/00-project-state.md "Known issues" — don't re-derive it. Prereq from the user: a VPS IP + SSH key. Tier 2 above is the blocker set for it.
+
+## What the Tier 1 session actually built (2026-07-05)
+
+See docs/00-project-state.md item 17 for the full feature list and docs/06-api-design.md for the three API surface changes (`/thumbnail`, `/path`, children-listing metadata). Notes worth carrying:
+
+- **Thumbnail location is deliberately not recorded in Postgres.** The worker places a thumbnail on the first *healthy* node of the ring's deterministic preference list for `thumb:<versionID>` (`processing.Processor.Process`); the read path (`file.Service.ThumbnailTargets` via new `storage.Router.Candidates`) presigns the *whole* unfiltered preference list healthy-first and lets the client walk it, exactly like download-plan targets. Don't "fix" this by recording a location row unless thumbnails grow real replication.
+- **`file.Repository.ListInFolder` now returns `ListEntry`** (File + latest-version size/mime/has-thumbnail via LEFT JOIN) — `folder.FileSummary` grew the same fields. Anything else that wants per-file display metadata in a listing should reuse that, not add round-trips.
+- **Environment state at session end:** Compose stack up (images rebuilt with the new code), `nimbus-web` container *stopped* in favor of `npm run dev` on 3000 during verification (`docker compose -f deploy/docker-compose.yml start nimbus-web` to restore); the Day 13 `kind` cluster's node container was **stopped, not deleted** (`docker start nimbus-control-plane` brings it back — but not while Compose is up, same ports). Seed data for re-verification: user `tier1-demo@nimbus.dev` / `tier1-demo-password`, org "Tier1 Demo Org" (Home → Pictures/Documents, gradient.png has a real thumbnail, 25 report-NN.txt files in Documents for pagination).
 
 ## What Day 15 actually built
 

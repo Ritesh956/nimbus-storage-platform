@@ -42,7 +42,7 @@ func (s *Service) GetAny(ctx context.Context, id string) (File, error) {
 	return s.repo.GetAny(ctx, id)
 }
 
-func (s *Service) ListInFolder(ctx context.Context, folderID string) ([]File, error) {
+func (s *Service) ListInFolder(ctx context.Context, folderID string) ([]ListEntry, error) {
 	return s.repo.ListInFolder(ctx, folderID)
 }
 
@@ -106,6 +106,42 @@ func (s *Service) DownloadPlan(ctx context.Context, fileID, versionID string) ([
 		plan[i] = DownloadPlanChunk{Sequence: c.Sequence, Hash: c.Hash, Targets: targets}
 	}
 	return plan, nil
+}
+
+// ThumbnailTargets returns presigned GET URLs for f's latest version's
+// worker-generated thumbnail, one per node in ring preference order,
+// healthy first. Unlike chunks, a thumbnail's location isn't recorded in
+// Postgres — the worker stored it on the first node of this same preference
+// list that was healthy at write time (processing.Processor.Process), so
+// the client tries each URL in order the same way it walks a download
+// plan's targets.
+func (s *Service) ThumbnailTargets(ctx context.Context, f File) ([]string, error) {
+	if f.LatestVersionID == nil {
+		return nil, ErrNoThumbnail
+	}
+	v, err := s.repo.GetVersion(ctx, f.ID, *f.LatestVersionID)
+	if err != nil {
+		return nil, err
+	}
+	if v.ThumbnailKey == nil {
+		return nil, ErrNoThumbnail
+	}
+
+	nodeIDs, err := s.router.Candidates(*v.ThumbnailKey)
+	if err != nil {
+		return nil, err
+	}
+	orderHealthyFirst(nodeIDs, s.router)
+
+	targets := make([]string, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		url, _, err := s.router.PresignGet(ctx, nodeID, *v.ThumbnailKey)
+		if err != nil {
+			continue // same skip-unpresignable-replica policy as DownloadPlan
+		}
+		targets = append(targets, url)
+	}
+	return targets, nil
 }
 
 // orderHealthyFirst stably moves healthy nodes ahead of down ones, so the

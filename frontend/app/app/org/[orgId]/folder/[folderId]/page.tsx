@@ -7,18 +7,21 @@ import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { FileRow } from "@/components/FileRow";
+import { MoveDialog } from "@/components/MoveDialog";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ArrowLeftIcon, FileIcon, FolderIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
+import { FileIcon, FolderIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
 
 export default function FolderPage() {
   const { orgId, folderId } = useParams<{ orgId: string; folderId: string }>();
   const { data, isLoading, mutate } = useSWR(folderId ? ["children", folderId] : null, () =>
     api.folders.children(folderId),
   );
+  const { data: path } = useSWR(folderId ? ["path", folderId] : null, () => api.folders.path(folderId));
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [movingFolder, setMovingFolder] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function createFolder(e: FormEvent) {
@@ -41,13 +44,26 @@ export default function FolderPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Link
-        href={`/app/org/${orgId}`}
-        className="glow-ring -mb-1 inline-flex w-fit items-center gap-1.5 rounded text-xs text-muted-2 transition-colors hover:text-foreground"
-      >
-        <ArrowLeftIcon size={13} />
-        All folders
-      </Link>
+      {/* Breadcrumb trail — ancestors are links, the current folder is text. */}
+      <nav aria-label="Breadcrumb" className="-mb-1 flex flex-wrap items-center gap-1 text-xs text-muted-2">
+        {(path ?? []).map((p, i, arr) =>
+          i < arr.length - 1 ? (
+            <span key={p.id} className="flex items-center gap-1">
+              <Link
+                href={`/app/org/${orgId}/folder/${p.id}`}
+                className="glow-ring rounded transition-colors hover:text-foreground"
+              >
+                {p.name}
+              </Link>
+              <span aria-hidden>/</span>
+            </span>
+          ) : (
+            <span key={p.id} className="font-medium text-muted">
+              {p.name}
+            </span>
+          ),
+        )}
+      </nav>
 
       <PageHeader
         title="Files"
@@ -102,9 +118,16 @@ export default function FolderPage() {
                   <span className="truncate text-sm">{f.name}</span>
                 </Link>
                 <button
+                  onClick={() => setMovingFolder({ id: f.id, name: f.name })}
+                  title="Move to…"
+                  className="glow-ring rounded-lg p-2 text-muted-2 transition-all hover:bg-surface-deep hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
+                >
+                  <FolderIcon size={15} />
+                </button>
+                <button
                   onClick={() => trashFolder(f.id)}
                   title="Move to trash"
-                  className="glow-ring mx-3 rounded-lg p-2 text-muted-2 transition-all hover:bg-danger/10 hover:text-danger lg:opacity-0 lg:group-hover:opacity-100"
+                  className="glow-ring mr-3 rounded-lg p-2 text-muted-2 transition-all hover:bg-danger/10 hover:text-danger lg:opacity-0 lg:group-hover:opacity-100"
                 >
                   <TrashIcon size={15} />
                 </button>
@@ -130,11 +153,20 @@ export default function FolderPage() {
           ) : (
             <ul>
               {data.files.map((f) => (
-                <FileRow key={f.id} fileId={f.id} name={f.name} onChanged={() => mutate()} />
+                <FileRow key={f.id} file={f} orgId={orgId} folderId={folderId} onChanged={() => mutate()} />
               ))}
             </ul>
           )}
         </div>
+      )}
+
+      {movingFolder && (
+        <MoveDialog
+          orgId={orgId}
+          item={{ kind: "folder", ...movingFolder }}
+          onClose={() => setMovingFolder(null)}
+          onMoved={() => mutate()}
+        />
       )}
     </div>
   );

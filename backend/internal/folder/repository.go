@@ -163,6 +163,35 @@ func (r *Repository) Update(ctx context.Context, id string, name *string, parent
 	return f, nil
 }
 
+// Ancestors returns the chain from the root folder down to folderID
+// itself (inclusive), for breadcrumb rendering. No deleted_at filter: the
+// caller was already authorized against the (live) folder itself, and a
+// trashed ancestor left behind by an independent restore shouldn't blow a
+// hole in the trail.
+func (r *Repository) Ancestors(ctx context.Context, folderID string) ([]PathEntry, error) {
+	rows, err := r.pool.Query(ctx,
+		`WITH RECURSIVE chain AS (
+			SELECT id, parent_id, name, 0 AS depth FROM folders WHERE id = $1
+			UNION ALL
+			SELECT f.id, f.parent_id, f.name, c.depth + 1 FROM folders f JOIN chain c ON f.id = c.parent_id
+		 )
+		 SELECT id, name FROM chain ORDER BY depth DESC`, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PathEntry
+	for rows.Next() {
+		var e PathEntry
+		if err := rows.Scan(&e.ID, &e.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // IsSelfOrDescendant reports whether candidateID equals folderID or is a
 // descendant of it — used to reject a move that would create a cycle.
 func (r *Repository) IsSelfOrDescendant(ctx context.Context, folderID, candidateID string) (bool, error) {

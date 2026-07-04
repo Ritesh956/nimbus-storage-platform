@@ -150,6 +150,19 @@ func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, resp)
 }
 
+// Thumbnail serves GET /v1/files/{fileId}/thumbnail — presigned GET URLs
+// for the latest version's thumbnail, 404 until nimbus-worker has produced
+// one (or forever, for mime types it doesn't handle).
+func (h *Handler) Thumbnail(w http.ResponseWriter, r *http.Request) {
+	f, _ := FileFromContext(r.Context())
+	targets, err := h.svc.ThumbnailTargets(r.Context(), f)
+	if err != nil {
+		writeFileError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"targets": targets})
+}
+
 func (h *Handler) DownloadPlan(w http.ResponseWriter, r *http.Request) {
 	f, _ := FileFromContext(r.Context())
 	versionID := r.PathValue("versionId")
@@ -188,6 +201,8 @@ func writeFileError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, httpserver.ErrInvalid, "file must be trashed before it can be purged")
 	case errors.Is(err, ErrVersionNotFound):
 		httpserver.WriteError(w, r, httpserver.ErrNotFound, "version not found for this file")
+	case errors.Is(err, ErrNoThumbnail):
+		httpserver.WriteError(w, r, httpserver.ErrNotFound, "no thumbnail exists for this file")
 	default:
 		httpserver.WriteError(w, r, httpserver.ErrInternal, "file operation failed")
 	}

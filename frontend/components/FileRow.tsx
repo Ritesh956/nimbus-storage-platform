@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { Button } from "./ui/Button";
+import { MoveDialog } from "./MoveDialog";
 import {
+  FolderIcon,
   FileIcon,
   DownloadIcon,
   PencilIcon,
@@ -14,22 +17,107 @@ import {
   ChevronDownIcon,
   RestoreIcon,
 } from "./ui/Icons";
-import type { FileVersion, ShareLink } from "@/lib/types";
+import type { FileSummary, FileVersion, ShareLink } from "@/lib/types";
+
+// Thumb renders a file's worker-generated thumbnail in the row's icon slot,
+// walking the presigned targets in order on load failure — the same
+// primary+fallback replica logic download() uses for chunks, just driven by
+// <img> onError instead of fetch. Falls back to the generic icon when every
+// replica fails.
+function Thumb({ fileId, name, onPreview }: { fileId: string; name: string; onPreview: (url: string) => void }) {
+  const { data } = useSWR(["thumbnail", fileId], () => api.files.thumbnail(fileId));
+  const [targetIdx, setTargetIdx] = useState(0);
+
+  const url = data?.targets[targetIdx];
+  if (!url) {
+    return (
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
+        <FileIcon size={15} />
+      </span>
+    );
+  }
+  return (
+    <span
+      role="button"
+      title="Preview"
+      onClick={(e) => {
+        e.stopPropagation();
+        onPreview(url);
+      }}
+      className="glow-ring block size-8 shrink-0 overflow-hidden rounded-lg bg-surface-deep"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- presigned MinIO URL, not optimizable */}
+      <img
+        src={url}
+        alt={`Thumbnail of ${name}`}
+        className="size-full object-cover"
+        onError={() => setTargetIdx((i) => i + 1)}
+      />
+    </span>
+  );
+}
+
+// PreviewModal shows the thumbnail at full size (256px longest edge — what
+// the worker generates) over a dismissable backdrop.
+function PreviewModal({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="panel flex max-w-lg flex-col gap-3 p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- presigned MinIO URL, not optimizable */}
+        <img src={url} alt={`Preview of ${name}`} className="max-h-[70vh] rounded-lg object-contain" />
+        <div className="flex items-center justify-between gap-3">
+          <span className="min-w-0 truncate text-sm text-muted">{name}</span>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Share-link expiry presets — the API accepts any RFC3339 expires_at; these
+// are just the sensible dropdown steps (never = omit the field).
+const expiryOptions = {
+  never: { label: "No expiry", ms: 0 },
+  "1h": { label: "Expires in 1 hour", ms: 60 * 60 * 1000 },
+  "1d": { label: "Expires in 1 day", ms: 24 * 60 * 60 * 1000 },
+  "7d": { label: "Expires in 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+} as const;
 
 interface Props {
-  fileId: string;
-  name: string;
+  file: FileSummary;
+  orgId: string;
+  folderId: string;
   onChanged: () => void;
 }
 
-export function FileRow({ fileId, name, onChanged }: Props) {
+export function FileRow({ file, orgId, folderId, onChanged }: Props) {
+  const fileId = file.id;
+  const name = file.name;
   const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
   const [versions, setVersions] = useState<FileVersion[] | null>(null);
   const [share, setShare] = useState<ShareLink | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
+  const [shareExpiry, setShareExpiry] = useState<keyof typeof expiryOptions>("never");
+  const [shareExpiresAt, setShareExpiresAt] = useState<string | null>(null);
 
   async function loadVersions() {
     try {
@@ -87,7 +175,10 @@ export function FileRow({ fileId, name, onChanged }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const link = await api.files.share(fileId);
+      const ttlMs = expiryOptions[shareExpiry].ms;
+      const expiresAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : undefined;
+      const link = await api.files.share(fileId, expiresAt);
+      setShareExpiresAt(expiresAt ?? null);
       // The backend's own `url` field points at itself
       // (NIMBUS_API/v1/shares/{token}, raw JSON) since it has no idea
       // what the frontend's origin is — found by actually clicking
@@ -134,9 +225,13 @@ export function FileRow({ fileId, name, onChanged }: Props) {
         onClick={toggle}
         className="glow-ring flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/60 sm:px-5"
       >
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
-          <FileIcon size={15} />
-        </span>
+        {file.has_thumbnail ? (
+          <Thumb fileId={fileId} name={name} onPreview={setPreview} />
+        ) : (
+          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
+            <FileIcon size={15} />
+          </span>
+        )}
         {renaming ? (
           <input
             className="glow-ring flex-1 rounded-lg border border-border bg-surface-deep px-2 py-1 text-sm"
@@ -147,7 +242,7 @@ export function FileRow({ fileId, name, onChanged }: Props) {
         ) : (
           <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
         )}
-        {versions?.[0] && <span className="text-xs text-muted-2">{formatBytes(versions[0].size_bytes)}</span>}
+        {file.size_bytes != null && <span className="text-xs text-muted-2">{formatBytes(file.size_bytes)}</span>}
         <ChevronDownIcon
           size={14}
           className={`shrink-0 text-muted-2 transition-transform ${open ? "rotate-180" : ""}`}
@@ -172,9 +267,27 @@ export function FileRow({ fileId, name, onChanged }: Props) {
                 Rename
               </Button>
             )}
-            <Button variant="secondary" disabled={busy} onClick={createShare}>
-              <LinkIcon size={13} />
-              Share
+            <span className="inline-flex items-center gap-1">
+              <Button variant="secondary" disabled={busy} onClick={createShare}>
+                <LinkIcon size={13} />
+                Share
+              </Button>
+              <select
+                value={shareExpiry}
+                onChange={(e) => setShareExpiry(e.target.value as keyof typeof expiryOptions)}
+                title="Share link expiry"
+                className="glow-ring rounded-lg border border-border bg-surface-deep px-2 py-1.5 text-xs text-muted focus:border-accent"
+              >
+                {Object.entries(expiryOptions).map(([key, opt]) => (
+                  <option key={key} value={key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <Button variant="secondary" disabled={busy} onClick={() => setMoving(true)}>
+              <FolderIcon size={13} />
+              Move
             </Button>
             <Button variant="danger" disabled={busy} onClick={trash}>
               <TrashIcon size={13} />
@@ -189,6 +302,9 @@ export function FileRow({ fileId, name, onChanged }: Props) {
                 value={share.url}
                 className="min-w-0 flex-1 truncate bg-transparent text-xs text-muted"
               />
+              <span className="shrink-0 text-[11px] text-muted-2">
+                {shareExpiresAt ? `expires ${formatDate(shareExpiresAt)}` : "never expires"}
+              </span>
               <Button variant="ghost" className="shrink-0" onClick={() => navigator.clipboard.writeText(share.url)}>
                 <CopyIcon size={13} />
                 Copy
@@ -240,6 +356,16 @@ export function FileRow({ fileId, name, onChanged }: Props) {
             </ul>
           </div>
         </div>
+      )}
+
+      {preview && <PreviewModal url={preview} name={name} onClose={() => setPreview(null)} />}
+      {moving && (
+        <MoveDialog
+          orgId={orgId}
+          item={{ kind: "file", id: fileId, name, currentFolderId: folderId }}
+          onClose={() => setMoving(false)}
+          onMoved={onChanged}
+        />
       )}
     </li>
   );

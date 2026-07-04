@@ -9,6 +9,7 @@ import {
   TrashIcon,
   PulseIcon,
   ServerIcon,
+  UsersIcon,
   LogoutIcon,
   LogoMark,
 } from "./ui/Icons";
@@ -16,6 +17,7 @@ import {
 const navItems = (orgId: string) => [
   { href: `/app/org/${orgId}`, label: "Files", icon: FolderIcon, match: `/app/org/${orgId}/folder` },
   { href: `/app/org/${orgId}/search`, label: "Search", icon: SearchIcon },
+  { href: `/app/org/${orgId}/members`, label: "Members", icon: UsersIcon },
   { href: `/app/org/${orgId}/trash`, label: "Trash", icon: TrashIcon },
   { href: `/app/org/${orgId}/activity`, label: "Activity", icon: PulseIcon },
   { href: `/app/org/${orgId}/admin`, label: "Admin", icon: ServerIcon },
@@ -108,7 +110,7 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
       </main>
 
       {/* Mobile bottom tab bar (<lg) */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         {items.map((item) => {
           const active = isActive(item);
           const Icon = item.icon;

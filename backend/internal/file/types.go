@@ -29,6 +29,17 @@ type Version struct {
 	CreatedAt      time.Time
 }
 
+// ListEntry is a File plus its latest version's display metadata — what
+// the folder-children listing renders a row from without a per-file
+// round-trip. SizeBytes/MimeType are nil for a file whose latest version
+// row is missing (never expected in practice; see Repository.CreateWithVersion).
+type ListEntry struct {
+	File
+	SizeBytes    *int64
+	MimeType     *string
+	HasThumbnail bool
+}
+
 // VersionChunk is one entry in a version's ordered chunk list.
 type VersionChunk struct {
 	Sequence int
@@ -49,4 +60,5 @@ var (
 	ErrInvalidFolder   = errors.New("target folder not found or in a different organization")
 	ErrNotTrashed      = errors.New("file must be trashed before it can be purged")
 	ErrVersionNotFound = errors.New("version not found for this file")
+	ErrNoThumbnail     = errors.New("no thumbnail exists for this file")
 )
