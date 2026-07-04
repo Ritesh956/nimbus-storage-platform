@@ -2,13 +2,36 @@
 
 Written at the end of the session that completed Day 15 (SRS Definition-of-Done pass — the last day on the original roadmap). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
 
-## Next objective
+## Next objective: the agreed feature backlog (user-approved, start here)
 
-There is no more scheduled roadmap. All 15 days (Days 1-14 core build + Day 15 DoD pass) are done, plus a post-roadmap session that restyled the frontend to Dashdark X, made it fully responsive, and deployed it (frontend only) to Vercel at https://nimbus-storage-platform.vercel.app.
+All 15 roadmap days are done, plus a post-roadmap session that restyled the frontend to Dashdark X, made it fully responsive, and deployed it (frontend only) to Vercel at https://nimbus-storage-platform.vercel.app.
 
-The most likely next objective is the **deferred go-public plan**: the user wanted the backend on a VPS ("make it fully public") but chose to hold off when told a VPS account/payment is theirs to create. The full agreed recipe (VPS + DuckDNS subdomain + Caddy TLS in front of api *and* MinIO nodes + fresh secrets + narrowed CORS + Vercel env var + redeploy) is written down in docs/00-project-state.md "Known issues" — start there; don't re-derive it. Prereq from the user: a VPS IP + SSH key. Blocker-level gaps to close before actually exposing it: rate limiting and upload size caps (neither exists).
+At the end of that session the user asked for a prioritized list of practical, free improvements and said they'd start on it in a new session. **The agreed starting sequence is: #1 → #2 → #8 → #7 → #10** ("product feels finished" → "safe to expose" → "best interview story"). Full backlog as presented and accepted:
 
-Otherwise: docs/01-srs.md §6's post-v1 roadmap ideas (desktop/CLI sync, real RBAC, gRPC API, OTel tracing + Loki, Terraform, encryption-at-rest, rebalancing/GC, quotas/billing) — ask the user rather than assuming.
+**Tier 1 — backend already does it, UI doesn't show it (cheapest wins)**
+1. **Show thumbnails in the UI** — the worker already generates + stores thumbnails (`file_versions.thumbnail_key`), but the frontend never displays them. Needs one presigned-GET endpoint for the thumbnail key + rendering in the file row and a click-to-preview modal. Highest visible-impact item in the repo.
+2. **Org members UI** — add/remove/list members is fully built API-side (owner-gated); there is no screen for it. A Members page with invite-by-email + role pills, Dashdark table pattern.
+3. **Move files/folders UI** — `PATCH` supports moves with cycle detection; UI only renames. "Move to…" dialog with folder picker.
+4. **Search filters + pagination UI** — backend supports date/size/owner filters and cursors; UI exposes only `type`. Filter chips + "Load more".
+5. **Share expiry in the UI** — API accepts `expires_at`; share dialog never offers it. Expiry dropdown (1h/1d/7d/never).
+6. **Breadcrumbs** — only a jump-to-root link exists today; needs an ancestors query + trail.
+
+**Tier 2 — blockers before the VPS go-public plan**
+7. **Rate limiting** — per-user/per-IP Redis token bucket middleware (designed in docs/04-lld.md, never built).
+8. **Upload caps + org quotas** — no size limit and no quota exist at all; max-file-size check at upload-init + per-org bytes quota (sizes already tracked in Postgres).
+9. **DLQ visibility** — failed worker events route to a dead-letter subject nothing reads; admin endpoint listing dead events + retry button.
+
+**Tier 3 — distributed-systems flex (portfolio meat)**
+10. **Chunk garbage collection** — content-addressed dedup means deleting a file never frees storage; purged files leave orphaned chunks in MinIO forever. Refcount chunks + background sweep in the worker (watch the in-flight-upload-references-chunk-being-reaped race). The most staff-level item here.
+11. **Trash auto-purge** — FR-11 promises retention-window purge; no timer exists. Worker ticker, feeds into #10.
+12. **Live updates via SSE** — activity/node-health currently poll; SSE makes thumbnails pop in and chaos-demo node failures flip red live.
+13. **Hash-ring visualization** — admin-page ring diagram (vnodes + where a file's chunks landed); one debug endpoint + frontend.
+
+**Tier 4 — auth polish**
+14. **Password reset flow** — token table + email via a local Mailpit container (free SMTP catcher).
+15. **TOTP 2FA** — standard library, pairs with the existing auth_audit_log.
+
+After (or alongside) the backlog, the other open thread is the **deferred go-public plan**: the user wanted the backend on a VPS but held off since the VPS account/payment is theirs to create. Full agreed recipe is in docs/00-project-state.md "Known issues" — don't re-derive it. Prereq from the user: a VPS IP + SSH key. Tier 2 above is the blocker set for it.
 
 ## What Day 15 actually built
 

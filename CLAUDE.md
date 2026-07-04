@@ -2,7 +2,7 @@
 
 Distributed cloud storage platform (Dropbox/Drive-alike) — a portfolio-quality demonstration of distributed-systems engineering. Go backend (modular monolith + one extracted worker service), Next.js frontend, Docker Compose for local infra.
 
-**Before doing anything else, read [docs/00-project-state.md](docs/00-project-state.md)** — it is the authoritative "what's actually true right now" snapshot (architecture, completed features, known gaps, confirmed design decisions). If any other doc disagrees with it, `docs/00-project-state.md` wins. For what to work on next, read [docs/next-session.md](docs/next-session.md).
+**Before doing anything else, read [docs/00-project-state.md](docs/00-project-state.md)** — it is the authoritative "what's actually true right now" snapshot (architecture, completed features, known gaps, confirmed design decisions). If any other doc disagrees with it, `docs/00-project-state.md` wins. For what to work on next, read [docs/next-session.md](docs/next-session.md) — it currently holds a **user-approved 15-item feature backlog** (agreed starting sequence: thumbnails-in-UI → members UI → upload caps/quotas → rate limiting → chunk GC); work through that rather than inventing new scope.
 
 Full design doc series lives in `docs/01` through `docs/09` (SRS → System Design → HLD → LLD → DB design → API design → distributed architecture → folder structure → roadmap).
 
