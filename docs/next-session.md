@@ -4,7 +4,11 @@ Written at the end of the session that completed Day 15 (SRS Definition-of-Done 
 
 ## Next objective
 
-There is no more scheduled roadmap. All 15 days (Days 1-14 core build + Day 15 DoD pass) are done. The next session's job is to ask the user what they want next — likely one of docs/01-srs.md §6's documented post-v1 roadmap ideas (desktop/CLI sync, real RBAC, gRPC API, OTel tracing + Loki, Terraform + real cloud deploy, encryption-at-rest, automated rebalancing/compaction/GC, quotas/billing) — rather than assuming any particular one.
+There is no more scheduled roadmap. All 15 days (Days 1-14 core build + Day 15 DoD pass) are done, plus a post-roadmap session that restyled the frontend to Dashdark X, made it fully responsive, and deployed it (frontend only) to Vercel at https://nimbus-storage-platform.vercel.app.
+
+The most likely next objective is the **deferred go-public plan**: the user wanted the backend on a VPS ("make it fully public") but chose to hold off when told a VPS account/payment is theirs to create. The full agreed recipe (VPS + DuckDNS subdomain + Caddy TLS in front of api *and* MinIO nodes + fresh secrets + narrowed CORS + Vercel env var + redeploy) is written down in docs/00-project-state.md "Known issues" — start there; don't re-derive it. Prereq from the user: a VPS IP + SSH key. Blocker-level gaps to close before actually exposing it: rate limiting and upload size caps (neither exists).
+
+Otherwise: docs/01-srs.md §6's post-v1 roadmap ideas (desktop/CLI sync, real RBAC, gRPC API, OTel tracing + Loki, Terraform, encryption-at-rest, rebalancing/GC, quotas/billing) — ask the user rather than assuming.
 
 ## What Day 15 actually built
 
