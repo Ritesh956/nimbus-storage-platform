@@ -36,3 +36,16 @@ func (rt *Router) PutObject(ctx context.Context, node NodeID, key string, data [
 	_, err := cli.PutObject(ctx, bucketName, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{ContentType: contentType})
 	return err
 }
+
+// RemoveObject deletes key from node via the internal client — used by the
+// GC sweeper. S3 DeleteObject is idempotent (deleting a nonexistent key
+// succeeds), which is exactly what an at-least-once sweep retry needs.
+func (rt *Router) RemoveObject(ctx context.Context, node NodeID, key string) error {
+	rt.mu.RLock()
+	cli := rt.internalMinio[node]
+	rt.mu.RUnlock()
+	if cli == nil {
+		return fmt.Errorf("no internal MinIO client for node %s", node)
+	}
+	return cli.RemoveObject(ctx, bucketName, key, minio.RemoveObjectOptions{})
+}

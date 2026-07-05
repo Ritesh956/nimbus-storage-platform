@@ -48,6 +48,16 @@ type Config struct {
 	RateLimitRPS   int
 	RateLimitBurst int
 
+	// GCInterval is how often nimbus-worker's chunk sweeper ticks; GCGrace
+	// is both how long a chunk must be unreferenced-and-unseen before it's
+	// doomed and how long it must stay doomed before its bytes are deleted
+	// (docs/07-distributed-architecture.md §6). GCGrace should stay well
+	// above the 15-minute presign expiry — a client told "chunk exists" must
+	// get to finish its session before the chunk can be reaped. Interval 0
+	// disables GC entirely.
+	GCInterval time.Duration
+	GCGrace    time.Duration
+
 	StorageNodes   []StorageNode
 	MinIOAccessKey string
 	MinIOSecretKey string
@@ -79,6 +89,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.RefreshTokenTTL, err = getDuration("NIMBUS_REFRESH_TOKEN_TTL", 7*24*time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.GCInterval, err = getDuration("NIMBUS_GC_INTERVAL", 10*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.GCGrace, err = getDuration("NIMBUS_GC_GRACE", time.Hour); err != nil {
 		return Config{}, err
 	}
 	if v := os.Getenv("NIMBUS_TRASH_RETENTION_DAYS"); v != "" {

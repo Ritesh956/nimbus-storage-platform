@@ -3,8 +3,9 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
+import { useLiveEvents } from "@/lib/live";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { FileRow } from "@/components/FileRow";
 import { MoveDialog } from "@/components/MoveDialog";
@@ -19,6 +20,17 @@ export default function FolderPage() {
     api.folders.children(folderId),
   );
   const { data: path } = useSWR(folderId ? ["path", folderId] : null, () => api.folders.path(folderId));
+  const { mutate: mutateKey } = useSWRConfig();
+  // Live updates (backlog #12): a thumbnail_generated event re-fetches both
+  // the children listing (has_thumbnail flips true) and that file's cached
+  // thumbnail targets, so thumbs pop in without a refresh; an uploaded
+  // event surfaces another member's upload into this listing.
+  useLiveEvents(orgId, {
+    onActivity: (e) => {
+      if (e.verb === "thumbnail_generated") void mutateKey(["thumbnail", e.target_id]);
+      if (e.verb === "thumbnail_generated" || e.verb === "uploaded") void mutate();
+    },
+  });
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [movingFolder, setMovingFolder] = useState<{ id: string; name: string } | null>(null);

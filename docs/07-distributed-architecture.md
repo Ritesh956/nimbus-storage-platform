@@ -1,7 +1,7 @@
 # Distributed Architecture Detail — Nimbus Storage Platform
 
-Status: current as of Day 12 — §5 (chaos test) updated to reflect what's actually built; other sections still as originally drafted
-Version: 0.2
+Status: current as of the Tier 3 backlog session (2026-07-05) — §6 (chunk GC + trash auto-purge) added as built
+Version: 0.3
 Depends on: [02-system-design.md](02-system-design.md) §2, [04-lld.md](04-lld.md) §1
 
 Fills in the operational specifics System Design/LLD referenced but didn't pin down: Redis key schema, NATS config, node registration, and the chaos test that proves all of this actually works.
@@ -65,6 +65,21 @@ Steps (all ten assertions passed on a real run against the compose stack):
 
 Run it: `node scripts/chaos-node-kill.js [node-2]` against a running `docker compose up` stack.
 
-## 6. Resolved decisions
+## 6. Chunk garbage collection (backlog #10, built in the Tier 3 session, 2026-07-05)
+
+Content-addressed dedup (FR-7) means deleting a file never frees storage: purge removes the `file_version_chunks` references but the `chunks` row and MinIO objects survive forever. `nimbus-worker` runs a mark/sweep collector (`internal/gc`, `NIMBUS_GC_INTERVAL` default 10m):
+
+- **Refcount is computed, not stored** — "is this chunk referenced?" is a `NOT EXISTS` probe against `file_version_chunks` (indexed on `chunk_hash`, migration 000007). Version rows die by `ON DELETE CASCADE` from purge, so a stored counter would need triggers to stay honest; the computed probe can't drift.
+- **Mark**: a live chunk is doomed (`chunks.gc_state = 'doomed'`) once it is (a) referenced by no version, (b) not pinned by a recent in-progress upload session's `upload_chunks` attempts (24h cutoff, so abandoned sessions can't pin forever), and (c) unseen for `NIMBUS_GC_GRACE` (default 1h — deliberately above the 15-minute presign expiry).
+- **The dedup check is a lease**: `POST /v1/chunks/check` (and `/complete`'s validation) touches `last_seen_at` on every chunk it reports present — telling a client "already stored, skip the upload" obligates us to keep the bytes for a grace window. Doomed chunks are reported *missing*, so the client re-uploads the bytes, and its commit **resurrects** the chunk (`UpsertGlobalChunk`'s conflict arm flips doomed→live).
+- **Sweep**: chunks doomed for a further `NIMBUS_GC_GRACE` are reaped one per transaction: re-verify doomed-and-unreferenced under `SELECT ... FOR UPDATE`, delete the MinIO objects from every recorded `chunk_locations` replica, then `DELETE` the row. A replica whose node is down aborts that chunk's transaction — the doomed row is the durable work record, retried next tick (S3 deletes are idempotent, so at-least-once is safe). The FK from `file_version_chunks` (`ON DELETE RESTRICT`) is the final arbiter: a reference created between re-verify and delete fails the sweep transaction loudly instead of orphaning a version's chunk.
+- **Residual race, documented not hidden**: MinIO object writes aren't coordinated through Postgres, so a client PUT landing in the milliseconds between the sweep's in-transaction re-verify and its object deletion can still lose bytes — it requires a chunk unreferenced and unseen for a full grace window, doomed for another, then re-uploaded during the exact deletion transaction. The commit's row upsert serializes against the sweep's row lock, so the DB never disagrees with itself. Closing it fully needs generation-versioned object keys; explicitly out of scope for v1.
+- Metrics: `nimbus_gc_chunks_doomed_total`, `nimbus_gc_chunks_reaped_total`, `nimbus_gc_bytes_reclaimed_total`, `nimbus_gc_sweep_failures_total`.
+
+The same worker tick also runs **trash auto-purge** (FR-11, backlog #11): files/folders trashed longer than `NIMBUS_TRASH_RETENTION_DAYS` (default 30) are hard-deleted (`PurgeExpiredTrash` on the file/folder repositories via the `gc.TrashPurger` port), which is what frees their chunk references for the mark phase. Folder purge cascades over its whole subtree, so each expired folder is guarded by a subtree liveness check — a file individually restored inside a trashed folder keeps the folder alive.
+
+Verified end-to-end by `scripts/smoke-gc.js` (Compose-only, needs short GC windows via a compose override): 13 assertions covering dedup protection, doom, dedup-invisibility, resurrection + post-resurrection download, physical sweep on every replica, trash auto-purge feeding GC, the folder liveness guard, and down-node at-least-once retry.
+
+## 7. Resolved decisions
 
 Vnode count (128) and hash truncation (SHA-1→uint32) — confirmed as implementation defaults, `internal/storage/ring.go`. No real tradeoff at this node count; would only matter citing/defending a specific number at internet scale (docs/02-system-design.md §8).

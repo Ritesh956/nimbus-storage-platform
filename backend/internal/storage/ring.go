@@ -43,6 +43,31 @@ func hashKey(s string) uint32 {
 	return binary.BigEndian.Uint32(sum[:4])
 }
 
+// RingVNode is one virtual node in a ring snapshot — the read model behind
+// GET /v1/admin/ring (backlog #13). Position is the vnode's point on the
+// uint32 ring; the admin UI maps it to an angle.
+type RingVNode struct {
+	Position uint32
+	Node     NodeID
+}
+
+// VNodes returns the ring's vnode table in position order. The ring is
+// immutable once built, so handing out a copy is race-free by construction.
+func (r *Ring) VNodes() []RingVNode {
+	out := make([]RingVNode, len(r.vnodes))
+	for i, vn := range r.vnodes {
+		out[i] = RingVNode{Position: vn.hash, Node: vn.node}
+	}
+	return out
+}
+
+// PositionOf exposes the ring's key-hashing (SHA-1 → uint32) so the admin
+// ring view can plot where a chunk hash lands — must stay the same function
+// placement uses, or the diagram would lie.
+func PositionOf(key string) uint32 {
+	return hashKey(key)
+}
+
 // search returns the index of the first vnode at or after h on the ring,
 // wrapping to 0 (O(log V), binary search over the sorted vnode slice).
 func (r *Ring) search(h uint32) int {

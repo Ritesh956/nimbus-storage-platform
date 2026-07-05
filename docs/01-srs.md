@@ -33,7 +33,7 @@ The storage layer itself is the one deliberately distributed subsystem: multiple
 - FR-8 Checksum verification on upload and on read (integrity check). Upload-side: cross-replica ETag verification in `upload.Service.CommitChunk`. Read-side (Day 15): per-chunk SHA-256 re-verification in `processing.Processor.reassemble` (worker's thumbnail-generation path — the one place the server holds reassembled bytes in memory) with fallback to the next replica on a mismatch. The direct-to-client file download path (`file.Service.DownloadPlan`) hands out presigned MinIO URLs and never touches the server, so it remains client-verified only — an architectural fact, not a gap, since nimbus-api never sees those bytes.
 - FR-9 File download, including streamed/ranged download for large files
 - FR-10 Version history per file; restore a prior version
-- FR-11 Trash (soft delete) with restore; permanent delete after retention window or explicit purge
+- FR-11 Trash (soft delete) with restore; permanent delete after retention window or explicit purge *(retention-window auto-purge built in the Tier 3 session, backlog #11 — until then only explicit purge existed)*
 
 ### 3.3 Sharing
 - FR-12 Public share links with optional expiry
@@ -84,7 +84,7 @@ These are named so nobody — including future us — mistakes their absence for
 - gRPC (REST only — gRPC+gateway adds real complexity for no v1 payoff; noted as a documented roadmap item)
 - OpenTelemetry distributed tracing, Loki log aggregation — structured logs + Prometheus/Grafana only
 - Compression, encryption-at-rest as a configurable pipeline (checksumming yes; encryption noted as roadmap, see §6)
-- Storage rebalancing / background compaction / GC as automated jobs (dedup GC may be a manual/documented process, not a scheduled system)
+- Storage rebalancing / background compaction as automated jobs. ~~Dedup GC may be a manual/documented process, not a scheduled system~~ — **superseded (Tier 3 session, 2026-07-05)**: automated chunk GC was built as post-v1 backlog #10 (`nimbus-worker` mark/sweep, docs/07-distributed-architecture.md §6); rebalancing/compaction remain excluded
 - Billing, quotas enforcement beyond a soft usage counter
 
 ## 5. Non-functional requirements (demo-scale, honestly stated)

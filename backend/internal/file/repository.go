@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -148,6 +149,18 @@ func (r *Repository) Restore(ctx context.Context, id string) error {
 func (r *Repository) Purge(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM files WHERE id = $1 AND deleted_at IS NOT NULL`, id)
 	return err
+}
+
+// PurgeExpiredTrash hard-deletes every file trashed longer ago than
+// olderThan — FR-11's retention window, called from nimbus-worker's GC tick
+// (gc.TrashPurger). The row deletions cascade to file_versions and
+// file_version_chunks, which is what makes the freed chunks visible to the
+// chunk sweeper's mark phase.
+func (r *Repository) PurgeExpiredTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 * interval '1 second')`,
+		olderThan.Seconds())
+	return tag.RowsAffected(), err
 }
 
 // CreateWithVersion is the only way a file ever comes into existence — via

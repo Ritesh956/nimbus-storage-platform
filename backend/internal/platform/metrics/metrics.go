@@ -59,4 +59,24 @@ var (
 		Name: "nimbus_nats_consumer_pending",
 		Help: "Pending (undelivered or unacked) message count for a JetStream consumer.",
 	}, []string{"consumer"})
+
+	// GC counters are recorded by nimbus-worker's chunk sweeper
+	// (internal/gc). Doomed counts mark-phase transitions; reaped/reclaimed
+	// count only chunks whose objects and row were actually deleted.
+	GCChunksDoomedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nimbus_gc_chunks_doomed_total",
+		Help: "Chunks marked doomed (unreferenced past the grace window) by the GC mark phase.",
+	})
+	GCChunksReapedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nimbus_gc_chunks_reaped_total",
+		Help: "Doomed chunks physically deleted (MinIO objects + chunks row) by the GC sweep phase.",
+	})
+	GCBytesReclaimedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nimbus_gc_bytes_reclaimed_total",
+		Help: "Logical bytes freed by reaped chunks (chunk size, not multiplied by replica count).",
+	})
+	GCSweepFailuresTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nimbus_gc_sweep_failures_total",
+		Help: "Sweep attempts aborted mid-chunk (e.g. a replica's node unreachable); the chunk stays doomed and is retried next tick.",
+	})
 )

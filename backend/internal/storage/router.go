@@ -19,10 +19,13 @@ const (
 	// the down signal for anything reading Redis directly, without a
 	// separate "mark down" write that might never happen
 	// (docs/07-distributed-architecture.md §2).
-	healthTTL            = 6 * time.Second
-	probeInterval        = 2 * time.Second
-	probeTimeout         = 500 * time.Millisecond
-	healthChangesChannel = "nimbus:health:changes"
+	healthTTL     = 6 * time.Second
+	probeInterval = 2 * time.Second
+	probeTimeout  = 500 * time.Millisecond
+	// HealthChangesChannel carries "node-id:status" messages on every
+	// health transition — exported because internal/live relays it to
+	// browsers over SSE (backlog #12).
+	HealthChangesChannel = "nimbus:health:changes"
 )
 
 // Router owns the hash ring, per-node circuit breakers, and the
@@ -135,6 +138,14 @@ func (rt *Router) Candidates(key string) ([]NodeID, error) {
 	return rt.ring.SelectReplicas(key, len(rt.nodes), func(NodeID) bool { return true })
 }
 
+// RingSnapshot returns the current ring's vnode table (see Ring.VNodes) —
+// the admin ring view's layout data.
+func (rt *Router) RingSnapshot() []RingVNode {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return rt.ring.VNodes()
+}
+
 // IsHealthy reports whether id is currently marked healthy — used by
 // callers (e.g. file's download-plan) that need to order already-recorded
 // replica locations rather than make a fresh placement decision.
@@ -222,7 +233,7 @@ func (rt *Router) probeOne(ctx context.Context, node StorageNode) {
 
 	if changed {
 		rt.logger.Info("storage node health transition", "node", node.ID, "status", newStatus.String())
-		rt.redis.Publish(ctx, healthChangesChannel, fmt.Sprintf("%s:%s", node.ID, newStatus.String()))
+		rt.redis.Publish(ctx, HealthChangesChannel, fmt.Sprintf("%s:%s", node.ID, newStatus.String()))
 	}
 }
 

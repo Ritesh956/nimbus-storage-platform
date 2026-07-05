@@ -59,8 +59,18 @@ func (r *Repository) GetByIdempotencyKey(ctx context.Context, createdBy, key str
 
 // CheckExistingChunks returns which of hashes already exist in the global
 // content-addressed store — the dedup check behind POST /v1/chunks/check.
+//
+// The read doubles as a GC lease (docs/07-distributed-architecture.md §6):
+// telling a client "already stored, skip the upload" obligates us to keep
+// those bytes until the client's session plays out, so reporting a chunk
+// present also touches its last_seen_at — the sweeper won't doom a chunk
+// until it has been unreferenced AND unseen for the grace window. Doomed
+// chunks are deliberately reported missing: the client re-uploads the bytes
+// and the commit resurrects the chunk (see UpsertGlobalChunk).
 func (r *Repository) CheckExistingChunks(ctx context.Context, hashes []string) (map[string]bool, error) {
-	rows, err := r.pool.Query(ctx, `SELECT hash FROM chunks WHERE hash = ANY($1)`, hashes)
+	rows, err := r.pool.Query(ctx,
+		`UPDATE chunks SET last_seen_at = now() WHERE hash = ANY($1) AND gc_state = 'live' RETURNING hash`,
+		hashes)
 	if err != nil {
 		return nil, err
 	}
@@ -121,9 +131,15 @@ func (r *Repository) MarkChunkCommitted(ctx context.Context, uploadID, hash stri
 	return nil
 }
 
+// UpsertGlobalChunk records hash in the global content-addressed store. The
+// conflict arm is GC resurrection: a doomed chunk reads as missing at the
+// dedup check, so a commit for it means the client just re-PUT verified
+// bytes to the replicas — flipping it back to live is backed by fresh
+// objects, not a stale claim.
 func (r *Repository) UpsertGlobalChunk(ctx context.Context, hash string, sizeBytes int64) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO chunks (hash, size_bytes) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
+		`INSERT INTO chunks (hash, size_bytes) VALUES ($1, $2)
+		 ON CONFLICT (hash) DO UPDATE SET gc_state = 'live', doomed_at = NULL, last_seen_at = now()`,
 		hash, sizeBytes)
 	return err
 }

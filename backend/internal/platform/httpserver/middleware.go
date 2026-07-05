@@ -73,6 +73,14 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer's
+// Flush/SetWriteDeadline through this wrapper — embedding the
+// http.ResponseWriter *interface* doesn't promote the concrete type's
+// optional methods. Needed by the SSE handler (internal/live).
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // Chain applies middlewares in the order given (first wraps outermost),
 // matching the fixed order in docs/03-hld.md §2:
 // requestID -> recover -> logger -> ... -> handler.

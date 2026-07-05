@@ -20,6 +20,9 @@ import (
 	"nimbus/internal/activity"
 	"nimbus/internal/events"
 	"nimbus/internal/file"
+	"nimbus/internal/folder"
+	"nimbus/internal/gc"
+	"nimbus/internal/live"
 	"nimbus/internal/platform/config"
 	"nimbus/internal/platform/db"
 	"nimbus/internal/platform/httpserver"
@@ -103,7 +106,7 @@ func run() error {
 	go router.HealthCheckLoop(ctx)
 
 	fileRepo := file.NewRepository(pg)
-	activitySvc := activity.NewService(activity.NewRepository(pg))
+	activitySvc := activity.NewService(activity.NewRepository(pg), live.NewPublisher(rdb))
 	processor := processing.NewProcessor(fileRepo, storageRepo, router, activitySvc, logger)
 
 	consumer, err := events.Subscribe(ctx, js, events.NewRepository(pg), processor.Process)
@@ -111,6 +114,13 @@ func run() error {
 		return fmt.Errorf("subscribe to upload.completed: %w", err)
 	}
 	go pollConsumerLag(ctx, consumer, logger)
+
+	if cfg.GCInterval > 0 {
+		trashRetention := time.Duration(cfg.TrashRetentionDays) * 24 * time.Hour
+		sweeper := gc.NewSweeper(pg, router, cfg.GCInterval, cfg.GCGrace, trashRetention, fileRepo, folder.NewRepository(pg), logger)
+		go sweeper.Run(ctx)
+		logger.Info("gc sweeper started", "interval", cfg.GCInterval, "grace", cfg.GCGrace, "trash_retention", trashRetention)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpserver.Liveness)

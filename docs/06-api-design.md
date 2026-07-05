@@ -1,7 +1,7 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of the Tier 1 backlog session (post-Day-15)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4).
-Version: 0.3
+Status: **current as of the Tier 3 backlog session (2026-07-05)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5).
+Version: 0.4
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
 REST/JSON, versioned under `/v1`. Auth via `Authorization: Bearer <access_token>` except where marked public. CORS is enabled (`httpserver.CORS`, added Day 10 for the browser frontend) — permissive by default (`NIMBUS_CORS_ORIGIN=*`), safe here because auth is a Bearer token, not cookies.
@@ -85,6 +85,8 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 
 Resumability: a client that drops mid-upload re-calls `/chunks/check` on reconnect — already-committed chunks come back as not-missing. No separate "resume" endpoint.
 
+**GC interaction (Tier 3 session):** `/chunks/check` reporting a chunk present also renews its GC lease (`chunks.last_seen_at`), and chunks the collector has doomed are deliberately reported *missing* — the client re-uploads those bytes and the commit resurrects the chunk. Contract-wise nothing changes for clients (`missing` means "send it"); it just may occasionally include content the store technically still holds. See docs/07-distributed-architecture.md §6.
+
 **Limits (Tier 2 session):** `POST /v1/uploads` rejects `size_bytes` over `NIMBUS_MAX_UPLOAD_BYTES` (413 `too_large`) or past the org's `NIMBUS_ORG_QUOTA_BYTES` (507 `quota_exceeded`; usage = sum of every stored version's bytes org-wide, trashed included — purge is what frees quota). `/complete` re-checks both against the completed size, since nothing forces it to match what init declared. 0 disables either limit.
 
 ## 6. Download
@@ -109,6 +111,7 @@ Targets are presigned GET URLs to the chunk's *actually recorded* replica locati
 |---|---|---|---|
 | GET | `/v1/orgs/{orgId}/search?q=&type=&owner=&date_from=&date_to=&size_min=&size_max=&cursor=&limit=` | 200 `{results: [{file_id, name, folder_id, owner_id, created_at, size_bytes, mime_type}], next_cursor}` | `type` is a prefix match on mime_type (e.g. `image` matches `image/png`) |
 | GET | `/v1/orgs/{orgId}/activity?cursor=&limit=` | 200 `{events: [{verb, target_type, target_id, actor, created_at}], next_cursor}` | `verb` is `"uploaded"` (written synchronously by nimbus-api) or `"thumbnail_generated"` (written by nimbus-worker, `actor: null`) |
+| GET | `/v1/orgs/{orgId}/events` | 200 `text/event-stream` | SSE live updates (Tier 3 session, backlog #12; `internal/live`). Frames: `activity` (`{verb, target_type, target_id}` — relayed from Redis pub/sub, so worker-written events arrive too) and `node_health` (`{node, status}` on health *transitions*). Thin revalidation signals, not full payloads — the frontend mutates its SWR caches on receipt. Consumed via `fetch` + stream reader, not EventSource (which can't send the Authorization header); keepalive comment every 25s |
 
 ## 9. Admin — `internal/storage`, `internal/events`
 
@@ -117,6 +120,7 @@ Targets are presigned GET URLs to the chunk's *actually recorded* replica locati
 | GET | `/v1/admin/nodes` | 200 `[{id, endpoint, status, last_heartbeat_at}]` | this is what's on screen during the chaos demo; requires auth only, no platform-admin role exists |
 | GET | `/v1/admin/dlq` | 200 `{events: [{id, subject, payload, error, deliveries, status, created_at, retried_at?}]}` | dead-lettered NATS events (newest first, cap 100) — Tier 2 session; same auth-only posture as `/admin/nodes` |
 | POST | `/v1/admin/dlq/{id}/retry` | 200 `{status: "retried"}` | republishes the stored payload to its original subject; 409 if already retried |
+| GET | `/v1/admin/ring?file_id=` | 200 `{vnodes: [{position, node}], replication_factor, chunks?: [{sequence, hash, position, preference, locations}]}` | Tier 3 session (backlog #13): the live ring's vnode table (positions on the uint32 ring, same hashing placement uses). With `file_id`, adds the latest version's chunks — `preference` is today's health-ignoring ring walk, `locations` is where the bytes were actually committed; they diverge after a failover write. Rendered as the admin page's ring diagram |
 
 **Not implemented**: per-org usage (`GET /v1/admin/orgs/{orgId}/usage`, total bytes/file count) — was sketched in an earlier draft of this doc but never built; no roadmap day currently calls for it. `internal/admin` is a reserved, empty package (see docs/08-folder-structure.md).
 

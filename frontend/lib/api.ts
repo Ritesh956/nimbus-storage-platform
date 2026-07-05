@@ -11,6 +11,7 @@ import type {
   Member,
   Organization,
   ResolvedShare,
+  RingInfo,
   SearchResult,
   ShareLink,
   StorageNode,
@@ -194,5 +195,7 @@ export const api = {
     nodes: () => request<StorageNode[]>("/v1/admin/nodes"),
     dlq: () => request<{ events: DeadEvent[] }>("/v1/admin/dlq"),
     retryDeadEvent: (id: string) => request<{ status: string }>(`/v1/admin/dlq/${id}/retry`, { method: "POST" }),
+    ring: (fileId?: string) =>
+      request<RingInfo>(`/v1/admin/ring${fileId ? `?file_id=${encodeURIComponent(fileId)}` : ""}`),
   },
 };

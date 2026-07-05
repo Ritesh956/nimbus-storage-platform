@@ -3,6 +3,7 @@ package folder
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -259,4 +260,57 @@ func (r *Repository) RestoreCascade(ctx context.Context, folderID string) error 
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// PurgeExpiredTrash hard-deletes folders trashed longer ago than olderThan —
+// FR-11's retention window, called from nimbus-worker's GC tick
+// (gc.TrashPurger). Deleting a folders row CASCADEs to its whole subtree
+// (descendant folders and files, whatever their own deleted_at), so each
+// candidate is guarded: skipped if its subtree still contains anything live
+// (e.g. a file individually restored after the folder was trashed — restore
+// doesn't check ancestors). Trashed-but-unexpired descendants do go down
+// with an expired ancestor; they've been unreachable inside it since it was
+// trashed, so the ancestor's clock is the one that counts.
+func (r *Repository) PurgeExpiredTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id FROM folders
+		 WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 * interval '1 second')`,
+		olderThan.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	var candidates []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	var purged int64
+	for _, id := range candidates {
+		// The guard and delete are one statement, so nothing restored
+		// between them can be lost. A candidate inside another candidate's
+		// subtree just vanishes first via the ancestor's cascade — its own
+		// delete then matches zero rows, which is fine.
+		tag, err := r.pool.Exec(ctx, subtreeCTE+`
+			DELETE FROM folders WHERE id = $1
+			  AND NOT EXISTS (
+				SELECT 1 FROM folders f JOIN subtree s ON f.id = s.id WHERE f.deleted_at IS NULL
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM files fi JOIN subtree s ON fi.folder_id = s.id WHERE fi.deleted_at IS NULL
+			  )`, id)
+		if err != nil {
+			return purged, err
+		}
+		purged += tag.RowsAffected()
+	}
+	return purged, nil
 }

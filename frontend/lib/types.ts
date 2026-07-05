@@ -111,3 +111,22 @@ export interface StorageNode {
   status: "healthy" | "down";
   last_heartbeat_at: string | null;
 }
+
+export interface RingVNode {
+  position: number; // point on the uint32 hash ring
+  node: string;
+}
+
+export interface RingChunk {
+  sequence: number;
+  hash: string;
+  position: number;
+  preference: string[]; // ring walk order, health-ignoring
+  locations: string[]; // where the chunk was actually committed
+}
+
+export interface RingInfo {
+  vnodes: RingVNode[];
+  replication_factor: number;
+  chunks?: RingChunk[]; // present when ?file_id= was given
+}

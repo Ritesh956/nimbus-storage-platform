@@ -1,7 +1,7 @@
 # Database Design — Nimbus Storage Platform
 
-Status: current as of Day 10 (§2 covers migrations 000001-000004; see docs/00-project-state.md for the live summary)
-Version: 0.2
+Status: current as of the Tier 3 backlog session, 2026-07-05 (§2 covers migrations 000001-000008; see docs/00-project-state.md for the live summary)
+Version: 0.3
 Depends on: [02-system-design.md](02-system-design.md) §4, [04-lld.md](04-lld.md) §3
 
 Single Postgres database (per §3 of System Design: strong consistency for the hierarchical/transactional parts). All tables use `uuid` PKs (via `gen_random_uuid()`, `pgcrypto`) except append-only/high-volume tables (`activity_events`) which use `bigserial`, and content-addressed tables (`chunks`, `chunk_locations`) which are keyed by hash/node directly.
@@ -107,10 +107,15 @@ ALTER TABLE files ADD CONSTRAINT fk_files_latest_version
     FOREIGN KEY (latest_version_id) REFERENCES file_versions(id);
 
 -- global content-addressed chunk store (enables cross-user dedup, FR-7)
+-- gc_state/last_seen_at/doomed_at added by migration 000007 (chunk GC,
+-- backlog #10) — see §2.4 and docs/07-distributed-architecture.md §6.
 CREATE TABLE chunks (
-    hash       char(64) PRIMARY KEY, -- sha256 hex
-    size_bytes int NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
+    hash         char(64) PRIMARY KEY, -- sha256 hex
+    size_bytes   int NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    gc_state     chunk_gc_state NOT NULL DEFAULT 'live', -- 'live' | 'doomed'
+    last_seen_at timestamptz NOT NULL DEFAULT now(),     -- dedup-lease clock
+    doomed_at    timestamptz
 );
 
 CREATE TABLE file_version_chunks (
@@ -220,14 +225,24 @@ Non-null means this upload adds a version to an existing file rather than creati
 
 `files.name_tsv`'s definition in §2 above already reflects the *fixed* version. The original generated column (`to_tsvector('simple', name)`) had a real bug: Postgres's default parser treats a dotted/hyphenated filename like `photo-alpha.png` as one opaque token, so a plain-word search for "photo" never matched it. Migration 000004 rebuilds the column with `regexp_replace(name, '[^a-zA-Z0-9]+', ' ', 'g')` applied first. Found by actually running search (Day 8), not a theoretical concern.
 
+### 2.4 Migrations 000005/000006 — auth audit log (Day 15) and dead events (Tier 2)
+
+Documented with their owning modules rather than here: `auth_audit_log` (000005) in docs/01-srs.md FR-4 / docs/00-project-state.md item 15, `dead_events` (000006, the Postgres-table DLQ) in docs/07-distributed-architecture.md §3. Both are single self-contained tables with no FKs into the schema above.
+
+### 2.5 Migrations 000007/000008 — chunk GC + the uploads purge-blocking FK fix (Tier 3 session, 2026-07-05)
+
+Migration 000007 adds the `chunks` GC columns shown in §2 above, an index on `file_version_chunks (chunk_hash)` (the computed-refcount probe direction the PK can't serve), and a partial index on doomed chunks. Design in docs/07-distributed-architecture.md §6.
+
+Migration 000008 fixes a real bug the GC smoke suite caught: `uploads.file_id`, `uploads.version_id`, and `uploads.target_file_id` referenced `files`/`file_versions` with no `ON DELETE` action, so purging **any** uploaded file — which is every file, since a completed upload is the only creation path — failed with an FK violation. All three are now `ON DELETE SET NULL`: the completed-upload row is session bookkeeping (idempotency replay), not a reference that should pin a purged file forever. This had been broken since the columns were added (Days 5-6); nothing before the GC work ever purged an *uploaded* file end-to-end.
+
 ## 3. Design notes
 
-- **Dedup correctness**: `chunks` is global (not per-org) — the interesting claim ("dedup across users at the chunk level," SRS FR-7) lives entirely in `file_version_chunks` mapping many versions/files/orgs to the same `chunks.hash`. Deleting a file never deletes a `chunks` row directly; a chunk is only eligible for physical GC when no `file_version_chunks` row references it (documented as a manual/roadmap job per SRS §4, not automated in v1).
-- **Trash/restore** (FR-11) is `deleted_at` soft-delete on `folders`/`files`; restore clears it. **Permanent purge is manual only** (`DELETE /v1/files/{fileId}/purge`, one row at a time) — an earlier draft of this doc claimed a scheduled cron-style purge job in the worker; that was never built. `NIMBUS_TRASH_RETENTION_DAYS` (default 30) is parsed into config and otherwise unused — a real, flagged gap, not a subtle one.
+- **Dedup correctness**: `chunks` is global (not per-org) — the interesting claim ("dedup across users at the chunk level," SRS FR-7) lives entirely in `file_version_chunks` mapping many versions/files/orgs to the same `chunks.hash`. Deleting a file never deletes a `chunks` row directly; a chunk becomes eligible for physical GC when no `file_version_chunks` row references it. ~~Documented as a manual/roadmap job per SRS §4, not automated in v1~~ — **automated in the Tier 3 session (backlog #10)**: `nimbus-worker` runs a mark/sweep collector with a dedup-lease + resurrection protocol, see docs/07-distributed-architecture.md §6.
+- **Trash/restore** (FR-11) is `deleted_at` soft-delete on `folders`/`files`; restore clears it. Permanent deletion is explicit purge (`DELETE /v1/files/{fileId}/purge`) **or, since the Tier 3 session (backlog #11), the retention-window auto-purge in `nimbus-worker`'s GC tick** — `NIMBUS_TRASH_RETENTION_DAYS` (default 30) is now actually enforced, closing what this doc previously flagged as an unbuilt claim. Expired folders are guarded by a subtree liveness check before their cascading hard-delete (see `folder.Repository.PurgeExpiredTrash`).
 - **Why a `chunk_locations` join table instead of an array column on `chunks`**: needs to be queried from the `storage_nodes` side too (`GET /v1/admin/nodes`), and needs its own `status` for the degraded-replica case after a failover — an array on `chunks` can't represent that cleanly.
 - **Search** (FR-15/16) uses Postgres full-text (`tsvector`/GIN) on file name only for v1 — sufficient at this scale; a dedicated search engine (Elasticsearch/Meilisearch) is a roadmap item if fielded search grows beyond name/type/date/size filters.
 - **Folder uniqueness** uses a placeholder nil-UUID sentinel for root's `parent_id` in the partial unique index because Postgres unique indexes treat `NULL` as distinct values (two root folders named "X" would otherwise both be allowed) — a real gotcha worth knowing, not just boilerplate.
 
 ## 4. Resolved decisions
 
-- Retention window for permanent trash purge (FR-11): defaults to 30 days, configurable via `NIMBUS_TRASH_RETENTION_DAYS`. **Not enforced** — see §3 above; a scheduled purge job is an open roadmap item, not scheduled to any specific day yet.
+- Retention window for permanent trash purge (FR-11): defaults to 30 days, configurable via `NIMBUS_TRASH_RETENTION_DAYS`. **Enforced since the Tier 3 session** by `nimbus-worker`'s GC tick (backlog #11) — see §3 above.

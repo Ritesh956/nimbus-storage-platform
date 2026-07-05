@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
+import { useLiveEvents } from "@/lib/live";
+import { RingDiagram } from "@/components/RingDiagram";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { StatCard } from "@/components/ui/Card";
@@ -12,12 +15,17 @@ import { ServerIcon, PulseIcon, RestoreIcon } from "@/components/ui/Icons";
 import { timeAgo } from "@/lib/format";
 
 export default function AdminPage() {
-  // Polling, not a one-shot fetch — this page is meant to be on screen
-  // during a live failover demo (docs/07-distributed-architecture.md §5),
-  // where a node's status changes without any user action to trigger a refetch.
-  const { data: nodes } = useSWR("admin-nodes", () => api.admin.nodes(), { refreshInterval: 2000 });
+  const { orgId } = useParams<{ orgId: string }>();
+  // Health transitions arrive over SSE (backlog #12) — that's what flips a
+  // node red the moment the failover demo kills it. The slow poll remains
+  // as a fallback and keeps the heartbeat column fresh; SSE only fires on
+  // status *changes*.
+  const { data: nodes, mutate: mutateNodes } = useSWR("admin-nodes", () => api.admin.nodes(), {
+    refreshInterval: 10000,
+  });
   const { data: dlq, mutate: mutateDlq } = useSWR("admin-dlq", () => api.admin.dlq(), { refreshInterval: 5000 });
   const [dlqError, setDlqError] = useState<string | null>(null);
+  useLiveEvents(orgId, { onNodeHealth: () => void mutateNodes() });
 
   async function retry(id: string) {
     setDlqError(null);
@@ -36,7 +44,7 @@ export default function AdminPage() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Storage nodes"
-        description="Consistent-hash-routed storage nodes, health-checked every 2s. Refreshes automatically."
+        description="Consistent-hash-routed storage nodes, health-checked every 2s. Status changes stream in live."
       />
 
       {nodes && (
@@ -98,6 +106,8 @@ export default function AdminPage() {
           ))}
         </tbody>
       </TablePanel>
+
+      <RingDiagram orgId={orgId} nodes={nodes} />
 
       <TablePanel title="Dead-letter queue">
         <thead>

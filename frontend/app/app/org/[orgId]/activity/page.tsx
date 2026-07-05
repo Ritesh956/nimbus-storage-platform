@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { api } from "@/lib/api";
+import { useLiveEvents } from "@/lib/live";
 import { timeAgo } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ClockIcon } from "@/components/ui/Icons";
@@ -18,7 +19,10 @@ const verbLabels: Record<string, string> = {
 
 export default function ActivityPage() {
   const { orgId } = useParams<{ orgId: string }>();
-  const { data } = useSWR(["activity", orgId], () => api.orgs.activity(orgId));
+  const { data, mutate } = useSWR(["activity", orgId], () => api.orgs.activity(orgId));
+  // New events (own uploads, other members', the worker's thumbnails) push
+  // over SSE — each one just revalidates the feed (backlog #12).
+  useLiveEvents(orgId, { onActivity: () => void mutate() });
 
   return (
     <div className="flex flex-col gap-5">

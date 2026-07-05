@@ -22,6 +22,7 @@ import (
 	"nimbus/internal/events"
 	"nimbus/internal/file"
 	"nimbus/internal/folder"
+	"nimbus/internal/live"
 	"nimbus/internal/org"
 	"nimbus/internal/platform/config"
 	"nimbus/internal/platform/db"
@@ -87,6 +88,30 @@ func (a fileListerAdapter) ListInFolder(ctx context.Context, folderID string) ([
 	out := make([]folder.FileSummary, len(files))
 	for i, f := range files {
 		out[i] = folder.FileSummary{ID: f.ID, Name: f.Name, SizeBytes: f.SizeBytes, MimeType: f.MimeType, HasThumbnail: f.HasThumbnail}
+	}
+	return out, nil
+}
+
+// fileChunkResolverAdapter satisfies storage.FileChunkResolver using
+// file.Repository — resolves a file's latest version's chunk list for the
+// admin ring view (backlog #13).
+type fileChunkResolverAdapter struct{ repo *file.Repository }
+
+func (a fileChunkResolverAdapter) LatestVersionChunks(ctx context.Context, fileID string) ([]storage.ChunkRef, error) {
+	f, err := a.repo.GetAny(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if f.LatestVersionID == nil {
+		return []storage.ChunkRef{}, nil
+	}
+	chunks, err := a.repo.GetVersionChunks(ctx, *f.LatestVersionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]storage.ChunkRef, len(chunks))
+	for i, c := range chunks {
+		out[i] = storage.ChunkRef{Sequence: c.Sequence, Hash: c.Hash}
 	}
 	return out, nil
 }
@@ -233,15 +258,18 @@ func run() error {
 		return fmt.Errorf("storage ensure buckets: %w", err)
 	}
 	go router.HealthCheckLoop(ctx)
-	storageHandler := storage.NewHandler(storageRepo)
+
+	// fileRepo is built early (ahead of file's own wiring below) because the
+	// admin ring view needs it as a storage.FileChunkResolver.
+	fileRepo := file.NewRepository(pg)
+	storageHandler := storage.NewHandler(storageRepo, router, fileChunkResolverAdapter{repo: fileRepo}, cfg.ReplicationFactor)
 
 	mux.Handle("GET /v1/admin/nodes", requireAuth(http.HandlerFunc(storageHandler.ListNodes)))
+	mux.Handle("GET /v1/admin/ring", requireAuth(http.HandlerFunc(storageHandler.Ring)))
 
 	dlqHandler := events.NewDLQHandler(events.NewRepository(pg), eventPublisher)
 	mux.Handle("GET /v1/admin/dlq", requireAuth(http.HandlerFunc(dlqHandler.List)))
 	mux.Handle("POST /v1/admin/dlq/{id}/retry", requireAuth(http.HandlerFunc(dlqHandler.Retry)))
-
-	fileRepo := file.NewRepository(pg)
 
 	folderSvc := folder.NewService(folderRepo)
 	folderHandler := folder.NewHandler(folderSvc, fileListerAdapter{repo: fileRepo}, members)
@@ -271,10 +299,12 @@ func run() error {
 	mux.Handle("POST /v1/files/{fileId}/versions/{versionId}/restore", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.RestoreVersion))))
 
 	activityRepo := activity.NewRepository(pg)
-	activitySvc := activity.NewService(activityRepo)
+	activitySvc := activity.NewService(activityRepo, live.NewPublisher(rdb))
 	activityHandler := activity.NewHandler(activitySvc)
+	liveHandler := live.NewHandler(rdb)
 
 	mux.Handle("GET /v1/orgs/{orgId}/activity", requireAuth(requireMember(http.HandlerFunc(activityHandler.List))))
+	mux.Handle("GET /v1/orgs/{orgId}/events", requireAuth(requireMember(http.HandlerFunc(liveHandler.Stream))))
 
 	searchRepo := search.NewRepository(pg)
 	searchSvc := search.NewService(searchRepo)
