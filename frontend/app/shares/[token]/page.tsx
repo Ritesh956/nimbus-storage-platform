@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import JSZip from "jszip";
 import { api, ApiError } from "@/lib/api";
 import { Card, EyebrowLabel } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -55,9 +56,10 @@ export default function SharePage() {
   );
 }
 
-// downloadPlan reassembles a file client-side from presigned chunk URLs,
-// primary replica first with fallback — same walk FileRow.download does.
-async function downloadFromPlan(plan: DownloadPlan, name: string) {
+// assembleFromPlan reassembles a file client-side from presigned chunk
+// URLs, primary replica first with fallback — same walk FileRow.download
+// does.
+async function assembleFromPlan(plan: DownloadPlan): Promise<Blob> {
   const parts: BlobPart[] = [];
   for (const chunk of [...plan.chunks].sort((a, b) => a.sequence - b.sequence)) {
     let ok = false;
@@ -71,7 +73,11 @@ async function downloadFromPlan(plan: DownloadPlan, name: string) {
     }
     if (!ok) throw new Error(`could not fetch chunk ${chunk.sequence} from any replica`);
   }
-  const blobUrl = URL.createObjectURL(new Blob(parts));
+  return new Blob(parts);
+}
+
+function saveBlob(blob: Blob, name: string) {
+  const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl;
   a.download = name;
@@ -79,6 +85,28 @@ async function downloadFromPlan(plan: DownloadPlan, name: string) {
   a.click();
   a.remove();
   URL.revokeObjectURL(blobUrl);
+}
+
+async function downloadFromPlan(plan: DownloadPlan, name: string) {
+  saveBlob(await assembleFromPlan(plan), name);
+}
+
+// zipFolderInto recursively walks a shared folder via the public children
+// endpoint and adds every file to the zip, fetching each file's presigned
+// plan just-in-time (they expire in 15 minutes — presigning a whole tree
+// upfront would race the clock on big folders). The whole thing stays
+// client-side: the server never touches file bytes on the download path
+// (docs/01-srs.md FR-8), and zipping is no exception.
+async function zipFolderInto(token: string, folderId: string, zip: JSZip, onFile: () => void) {
+  const children = await api.shares.children(token, folderId);
+  for (const f of children.files) {
+    const { download_plan } = await api.shares.downloadPlan(token, f.id);
+    zip.file(f.name, await assembleFromPlan(download_plan));
+    onFile();
+  }
+  for (const sub of children.folders) {
+    await zipFolderInto(token, sub.id, zip.folder(sub.name)!, onFile);
+  }
 }
 
 function SingleFile({ file, plan, onError }: { file: ShareFileInfo; plan: DownloadPlan; onError: (m: string) => void }) {
@@ -189,6 +217,8 @@ function FolderBrowser({
   const [files, setFiles] = useState<ShareFileInfo[]>(initialFiles);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Zip-download progress: null = idle, number = files packed so far.
+  const [zipped, setZipped] = useState<number | null>(null);
 
   async function open(target: ShareFolderInfo, nextPath: ShareFolderInfo[]) {
     setLoading(true);
@@ -207,22 +237,45 @@ function FolderBrowser({
 
   const current = path[path.length - 1];
 
+  // Downloads whatever folder is on screen — the whole share at the root,
+  // just the subtree while browsing a subfolder.
+  async function downloadCurrentFolder() {
+    setZipped(0);
+    setError(null);
+    try {
+      const zip = new JSZip();
+      let n = 0;
+      await zipFolderInto(token, current.id, zip, () => setZipped(++n));
+      saveBlob(await zip.generateAsync({ type: "blob" }), `${current.name}.zip`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "folder download failed");
+    } finally {
+      setZipped(null);
+    }
+  }
+
   return (
     <Card className="overflow-hidden p-0">
-      <div className="border-b border-border/60 px-5 py-4">
-        <div className="flex items-center gap-2">
-          {path.length > 1 && (
-            <button
-              onClick={() => open(path[path.length - 2], path.slice(0, -1))}
-              className="glow-ring rounded p-1 text-muted-2 transition-colors hover:text-foreground"
-              title="Up one level"
-            >
-              <ArrowLeftIcon size={14} />
-            </button>
-          )}
-          <h1 className="min-w-0 truncate text-sm font-medium">{current.name}</h1>
+      <div className="flex items-center gap-3 border-b border-border/60 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            {path.length > 1 && (
+              <button
+                onClick={() => open(path[path.length - 2], path.slice(0, -1))}
+                className="glow-ring rounded p-1 text-muted-2 transition-colors hover:text-foreground"
+                title="Up one level"
+              >
+                <ArrowLeftIcon size={14} />
+              </button>
+            )}
+            <h1 className="min-w-0 truncate text-sm font-medium">{current.name}</h1>
+          </div>
+          <p className="mt-0.5 truncate text-xs text-muted-2">{path.map((p) => p.name).join(" / ")}</p>
         </div>
-        <p className="mt-0.5 truncate text-xs text-muted-2">{path.map((p) => p.name).join(" / ")}</p>
+        <Button variant="secondary" className="shrink-0" disabled={zipped !== null} onClick={downloadCurrentFolder}>
+          <DownloadIcon size={13} />
+          {zipped !== null ? `Zipping… (${zipped})` : "Download folder"}
+        </Button>
       </div>
       {error && <p className="px-5 py-3 text-xs text-danger">{error}</p>}
       {loading && <p className="px-5 py-3 text-xs text-muted-2">Loading…</p>}

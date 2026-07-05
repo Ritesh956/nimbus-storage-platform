@@ -22,7 +22,7 @@ See docs/00-project-state.md item 21 for the full list. Notes worth carrying:
 - **Password reset revokes all refresh families in the same transaction** that consumes the token and rewrites the hash (`auth.Repository.ResetPassword`). Reset does not touch TOTP — verified explicitly.
 - **No SMTP configured → links are logged, not sent** (`auth.Service.ForgotPassword`); that's the kind/k8s behavior today since mailpit is Compose-only (documented gap). Mailpit UI: http://localhost:8025, API `/api/v1/search?query=to:"<email>"`.
 - **Clipboard auto-copy silently degrades**: `navigator.clipboard.writeText` throws when the document isn't focused (headless/automation) — the catch keeps the manual Copy button as fallback. The "Copied" label is only set after a successful write, so it doubles as the verification signal.
-- Frontend gained its first new npm dependency in a while: `qrcode` (+`@types/qrcode`) for the enrollment QR data-URL.
+- Frontend gained two new npm dependencies: `qrcode` (+`@types/qrcode`) for the enrollment QR data-URL, and `jszip` for the public share page's "Download folder" button (a same-session follow-up: recursive client-side zip of a shared folder, plans fetched just-in-time per file — see docs/00-project-state.md item 21).
 
 ## Important context (carried forward, still true)
 
