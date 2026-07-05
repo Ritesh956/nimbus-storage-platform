@@ -1,16 +1,19 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FolderIcon, FileIcon, RestoreIcon, TrashIcon } from "@/components/ui/Icons";
 
 export default function TrashPage() {
   const { orgId } = useParams<{ orgId: string }>();
   const { data: folders, mutate: mutateFolders } = useSWR(["trash-folders", orgId], () => api.orgs.trashedFolders(orgId));
   const { data: files, mutate: mutateFiles } = useSWR(["trash-files", orgId], () => api.orgs.trashedFiles(orgId));
+  const [purging, setPurging] = useState<{ id: string; name: string } | null>(null);
 
   return (
     <div className="flex flex-col gap-5">
@@ -73,14 +76,7 @@ export default function TrashPage() {
                     <RestoreIcon size={13} />
                     Restore
                   </Button>
-                  <Button
-                    variant="danger"
-                    onClick={async () => {
-                      if (!confirm(`Permanently delete "${f.name}"? This cannot be undone.`)) return;
-                      await api.files.purge(f.id);
-                      await mutateFiles();
-                    }}
-                  >
+                  <Button variant="danger" onClick={() => setPurging({ id: f.id, name: f.name })}>
                     <TrashIcon size={13} />
                     Delete forever
                   </Button>
@@ -90,6 +86,20 @@ export default function TrashPage() {
           </ul>
         )}
       </div>
+
+      {purging && (
+        <ConfirmDialog
+          title={`Delete "${purging.name}" forever?`}
+          body="This permanently removes the file and every version of it. Freed storage is reclaimed by the garbage collector. This cannot be undone."
+          confirmLabel="Delete forever"
+          onCancel={() => setPurging(null)}
+          onConfirm={async () => {
+            await api.files.purge(purging.id);
+            await mutateFiles();
+            setPurging(null);
+          }}
+        />
+      )}
     </div>
   );
 }

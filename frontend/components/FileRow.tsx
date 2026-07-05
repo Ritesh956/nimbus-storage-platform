@@ -102,9 +102,14 @@ interface Props {
   orgId: string;
   folderId: string;
   onChanged: () => void;
+  // Multi-select for bundle sharing (post-Tier-3 session): when
+  // onToggleSelect is provided the row renders a leading checkbox; the
+  // parent owns the selection set.
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
-export function FileRow({ file, orgId, folderId, onChanged }: Props) {
+export function FileRow({ file, orgId, folderId, onChanged, selected = false, onToggleSelect }: Props) {
   const fileId = file.id;
   const name = file.name;
   const [open, setOpen] = useState(false);
@@ -221,10 +226,24 @@ export function FileRow({ file, orgId, folderId, onChanged }: Props) {
 
   return (
     <li className="border-t border-border/40 first:border-t-0">
-      <button
-        onClick={toggle}
-        className="glow-ring flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/60 sm:px-5"
-      >
+      {/* Checkbox lives beside the row button, not inside it — interactive
+          content can't nest in a <button>. */}
+      <div className="flex items-center">
+        {onToggleSelect && (
+          <label className="shrink-0 cursor-pointer py-3 pl-4 sm:pl-5" title="Select for sharing">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggleSelect}
+              className="glow-ring size-3.5 cursor-pointer rounded"
+              style={{ accentColor: "var(--accent)" }}
+            />
+          </label>
+        )}
+        <button
+          onClick={toggle}
+          className={`glow-ring flex w-full min-w-0 items-center gap-3 py-3 pr-4 text-left transition-colors hover:bg-surface-2/60 sm:pr-5 ${onToggleSelect ? "pl-3" : "pl-4 sm:pl-5"}`}
+        >
         {file.has_thumbnail ? (
           <Thumb fileId={fileId} name={name} onPreview={setPreview} />
         ) : (
@@ -247,7 +266,8 @@ export function FileRow({ file, orgId, folderId, onChanged }: Props) {
           size={14}
           className={`shrink-0 text-muted-2 transition-transform ${open ? "rotate-180" : ""}`}
         />
-      </button>
+        </button>
+      </div>
 
       {open && (
         <div className="border-t border-border/40 bg-surface-deep/40 px-4 py-4 text-sm sm:px-5">

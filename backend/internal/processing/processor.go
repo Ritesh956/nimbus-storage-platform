@@ -55,9 +55,19 @@ func (p *Processor) Process(ctx context.Context, evt events.UploadCompleted) err
 			return nil
 		}
 	case version.MimeType == "application/pdf":
-		thumb, err = generatePDFPlaceholder()
+		data, err := p.reassemble(ctx, evt.VersionID)
 		if err != nil {
-			return fmt.Errorf("generate pdf placeholder: %w", err)
+			return fmt.Errorf("reassemble chunks: %w", err)
+		}
+		thumb, err = generatePDFThumbnail(data)
+		if err != nil {
+			// A PDF pdfium can't parse won't succeed on redelivery either —
+			// fall back to the placeholder rather than retry or skip, so the
+			// file still gets *a* thumbnail.
+			logger.Warn("pdf page render failed, using placeholder", "error", err)
+			if thumb, err = generatePDFPlaceholder(); err != nil {
+				return fmt.Errorf("generate pdf placeholder: %w", err)
+			}
 		}
 	default:
 		logger.Info("no thumbnail handler for mime type, skipping", "mime_type", version.MimeType)

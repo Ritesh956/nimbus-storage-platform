@@ -1,7 +1,7 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of the Tier 3 backlog session (2026-07-05)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5).
-Version: 0.4
+Status: **current as of the post-Tier-3 UX/sharing session (2026-07-05)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5); the post-Tier-3 session added folder/bundle share scopes and the public share children/download-plan routes (§7).
+Version: 0.5
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
 REST/JSON, versioned under `/v1`. Auth via `Authorization: Bearer <access_token>` except where marked public. CORS is enabled (`httpserver.CORS`, added Day 10 for the browser frontend) — permissive by default (`NIMBUS_CORS_ORIGIN=*`), safe here because auth is a Bearer token, not cookies.
@@ -99,11 +99,17 @@ Targets are presigned GET URLs to the chunk's *actually recorded* replica locati
 
 ## 7. Sharing — `internal/sharing`
 
+A share link is scoped to exactly one of: a **file**, a **folder** (its whole subtree, navigable), or a **bundle** (a hand-picked file set — one link instead of one per file). Folder/bundle scopes added post-Tier-3 (migration 000009; `share_links.org_id` was also added so revoke authorization is one membership check against the link itself).
+
 | Method | Path | Body | 2xx | Notes |
 |---|---|---|---|---|
 | POST | `/v1/files/{fileId}/share` | `{expires_at?}` (RFC3339) | 201 `{token, url}` | `url` is the *backend's own* `/v1/shares/{token}` — the frontend deliberately ignores it and builds `{origin}/shares/{token}` itself (see docs/00-project-state.md known issues) |
-| GET | `/v1/shares/{token}` | — | 200 `{file: {id, name, size_bytes, mime_type, checksum_sha256}, download_plan: {...}}` | **public**, no auth header; 403 if expired, 404 if revoked/unknown |
-| DELETE | `/v1/shares/{token}` | — | 204 | requires org membership on the underlying file (resolved internally, since the route has no `{fileId}`) |
+| POST | `/v1/folders/{folderId}/share` | `{expires_at?}` | 201 `{token, url}` | folder scope; authorized by `folder.RequireAccess` |
+| POST | `/v1/orgs/{orgId}/shares` | `{file_ids: [...], expires_at?}` | 201 `{token, url}` | bundle scope; every file must be live and in the org (400 otherwise); a bundle of one normalizes to a plain file share |
+| GET | `/v1/shares/{token}` | — | 200, discriminated by `kind` | **public**. `kind:"file"` → `{file, download_plan}` (original shape); `kind:"folder"` → `{folder: {id,name}, folders: [...], files: [...]}` (direct children); `kind:"bundle"` → `{files: [...]}`. 403 if expired, 404 if revoked/unknown |
+| GET | `/v1/shares/{token}/folders/{folderId}` | — | 200 `{folder, folders, files}` | **public**; navigation inside a folder share — 404 unless `{folderId}` is the shared folder or a descendant |
+| GET | `/v1/shares/{token}/files/{fileId}/download-plan` | — | 200 `{file, download_plan}` | **public**; per-file download inside a folder/bundle share — plans are presigned on demand, not upfront (15-min expiry × possibly many files). 404 if the file isn't covered by the link's scope (same 404 whether it exists elsewhere or not — no probing) |
+| DELETE | `/v1/shares/{token}` | — | 204 | requires membership in the link's own org (`share_links.org_id`) |
 
 ## 8. Search & activity
 

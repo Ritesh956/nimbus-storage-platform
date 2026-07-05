@@ -1,10 +1,10 @@
 # Handoff — Next Session
 
-Updated at the end of the Tier 3 backlog session (2026-07-05). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
+Updated at the end of the post-Tier-3 UX/sharing session (2026-07-05, same day as Tiers 1–3). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
 
 ## Next objective: finish the agreed feature backlog (Tier 4), then the go-public VPS plan
 
-All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 1, Tier 2, and Tier 3 sessions (all 2026-07-05). **Tiers 1–3 are complete and verified live** — see docs/00-project-state.md items 17–19. Next per the agreed sequence: **Tier 4** (#14 password reset, then #15 TOTP 2FA). The go-public VPS plan stays unblocked backend-side; its remaining prereq is the user provisioning a VPS (their account/payment — ask, don't assume).
+All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 1, Tier 2, and Tier 3 sessions, plus a user-requested UX/sharing session (all 2026-07-05). **Tiers 1–3 are complete and verified live** — see docs/00-project-state.md items 17–20. Next per the agreed sequence: **Tier 4** (#14 password reset, then #15 TOTP 2FA). The go-public VPS plan stays unblocked backend-side; its remaining prereq is the user provisioning a VPS (their account/payment — ask, don't assume).
 
 Full backlog as presented and accepted:
 
@@ -23,6 +23,15 @@ Full backlog as presented and accepted:
 15. **TOTP 2FA** — standard library, pairs with the existing auth_audit_log.
 
 After (or alongside) Tier 4, the other open thread is the **deferred go-public plan**: full agreed recipe in docs/00-project-state.md "Known issues" — don't re-derive it. Prereq from the user: a VPS IP + SSH key.
+
+## What the post-Tier-3 UX/sharing session actually built (2026-07-05, after Tier 3 — user-requested, not from the numbered backlog)
+
+See docs/00-project-state.md item 20 for the full list: styled ConfirmDialog replacing `window.confirm` on trash purge, real PDF first-page thumbnails, folder shares, and multi-file bundle shares. Notes worth carrying:
+
+- **PDF rendering is go-pdfium's WebAssembly runtime** (pdfium→WASM under wazero) — chosen specifically to keep `CGO_ENABLED=0` builds working; don't "simplify" to go-fitz/MuPDF, that drags in cgo and breaks the alpine build. The WASM module is warmed up at worker boot (`processing.WarmupPDFium`, ~10s) because the first cold compile was observed at ~85s under load — longer than the NATS ack window, causing redundant (idempotent) redeliveries. If PDF thumbnails ever triple-log again, check the warmup ran.
+- **Share-scope model** (migration 000009): exactly one of `file_id` / `folder_id` / `share_link_files` rows per link; `org_id` denormalized onto the link for one-step revoke auth. Public per-file plans are presigned *on demand* (`GET /v1/shares/{token}/files/{fileId}/download-plan`), deliberately not embedded in the folder/bundle resolve — 15-min presign expiry × many files a visitor may never touch. Scope violations 404 identically whether the item exists or not.
+- **A bundle of one normalizes to a plain file share** (`sharing.Service.CreateBundleShare`) — the public page shows the simpler single-file card; don't "fix" the kind mismatch, it's intentional.
+- The legacy single-file share shape (`{file, download_plan}` + now `kind:"file"`) is unchanged — `scripts/smoke-sharing.js` still passes untouched, and the Vercel-deployed frontend build predating this session keeps working against it.
 
 ## What the Tier 3 session actually built (2026-07-05, after Tier 2)
 

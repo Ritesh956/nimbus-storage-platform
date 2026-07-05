@@ -13,6 +13,8 @@ import type {
   ResolvedShare,
   RingInfo,
   SearchResult,
+  ShareChildren,
+  ShareFileInfo,
   ShareLink,
   StorageNode,
 } from "./types";
@@ -118,6 +120,11 @@ export const api = {
       request<{ events: ActivityEvent[]; next_cursor: string }>(
         `/v1/orgs/${orgId}/activity${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
       ),
+    createBundleShare: (orgId: string, fileIds: string[], expiresAt?: string) =>
+      request<ShareLink>(`/v1/orgs/${orgId}/shares`, {
+        method: "POST",
+        body: json({ file_ids: fileIds, expires_at: expiresAt }),
+      }),
     rootFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/folders`),
     trashedFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/trash/folders`),
     trashedFiles: (orgId: string) => request<FileNode[]>(`/v1/orgs/${orgId}/trash/files`),
@@ -135,6 +142,8 @@ export const api = {
       request<FolderNode>(`/v1/folders/${folderId}`, { method: "PATCH", body: json({ parent_id: parentId }) }),
     trash: (folderId: string) => request(`/v1/folders/${folderId}`, { method: "DELETE" }),
     restore: (folderId: string) => request<FolderNode>(`/v1/folders/${folderId}/restore`, { method: "POST" }),
+    share: (folderId: string, expiresAt?: string) =>
+      request<ShareLink>(`/v1/folders/${folderId}/share`, { method: "POST", body: json({ expires_at: expiresAt }) }),
   },
 
   files: {
@@ -157,6 +166,12 @@ export const api = {
 
   shares: {
     resolve: (token: string) => request<ResolvedShare>(`/v1/shares/${token}`),
+    children: (token: string, folderId: string) =>
+      request<ShareChildren>(`/v1/shares/${token}/folders/${folderId}`),
+    downloadPlan: (token: string, fileId: string) =>
+      request<{ file: ShareFileInfo; download_plan: DownloadPlan }>(
+        `/v1/shares/${token}/files/${fileId}/download-plan`,
+      ),
     revoke: (token: string) => request(`/v1/shares/${token}`, { method: "DELETE" }),
   },
 

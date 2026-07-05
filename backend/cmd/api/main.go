@@ -136,16 +136,76 @@ func (a fileShareLookupAdapter) GetForShare(ctx context.Context, fileID string) 
 	return info, nil
 }
 
-// fileOrgLookupAdapter satisfies sharing.FileOrgLookup using file.Repository
-// — used only to authorize revoking a share link (docs/03-hld.md §1).
-type fileOrgLookupAdapter struct{ repo *file.Repository }
+// fileScopeAdapter satisfies sharing.FileScope using file.Repository —
+// org/folder of a live (non-trashed) file, for bundle-member validation
+// and folder-share subtree checks.
+type fileScopeAdapter struct{ repo *file.Repository }
 
-func (a fileOrgLookupAdapter) OrgIDOf(ctx context.Context, fileID string) (string, error) {
-	f, err := a.repo.GetAny(ctx, fileID)
+func (a fileScopeAdapter) LiveFileOrg(ctx context.Context, fileID string) (string, error) {
+	f, err := a.repo.Get(ctx, fileID)
 	if err != nil {
 		return "", err
 	}
 	return f.OrgID, nil
+}
+
+func (a fileScopeAdapter) LiveFileFolder(ctx context.Context, fileID string) (string, error) {
+	f, err := a.repo.Get(ctx, fileID)
+	if err != nil {
+		return "", err
+	}
+	return f.FolderID, nil
+}
+
+// folderShareAdapter satisfies sharing.FolderResolver using
+// folder.Repository + file.Repository — public-safe folder projections,
+// share listings, and the subtree test folder shares scope-check against.
+type folderShareAdapter struct {
+	folders *folder.Repository
+	files   *file.Repository
+}
+
+func (a folderShareAdapter) GetFolderForShare(ctx context.Context, folderID string) (sharing.FolderInfo, error) {
+	f, err := a.folders.Get(ctx, folderID) // trashed folders 404 — trashing a shared folder kills the link
+	if err != nil {
+		return sharing.FolderInfo{}, err
+	}
+	return sharing.FolderInfo{ID: f.ID, Name: f.Name}, nil
+}
+
+func (a folderShareAdapter) ListShareChildren(ctx context.Context, folderID string) ([]sharing.FolderInfo, []sharing.FileInfo, error) {
+	f, err := a.folders.Get(ctx, folderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	subfolders, err := a.folders.ListChildren(ctx, f.OrgID, &f.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	folderInfos := make([]sharing.FolderInfo, len(subfolders))
+	for i, sf := range subfolders {
+		folderInfos[i] = sharing.FolderInfo{ID: sf.ID, Name: sf.Name}
+	}
+	entries, err := a.files.ListInFolder(ctx, folderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	fileInfos := make([]sharing.FileInfo, len(entries))
+	for i, e := range entries {
+		info := sharing.FileInfo{ID: e.ID, Name: e.Name, LatestVersionID: e.LatestVersionID}
+		if e.SizeBytes != nil {
+			info.SizeBytes = *e.SizeBytes
+		}
+		if e.MimeType != nil {
+			info.MimeType = *e.MimeType
+		}
+		fileInfos[i] = info
+	}
+	return folderInfos, fileInfos, nil
+}
+
+func (a folderShareAdapter) IsSelfOrDescendant(ctx context.Context, folderID, candidateID string) (bool, error) {
+	return a.folders.IsSelfOrDescendant(ctx, folderID, candidateID)
 }
 
 func main() {
@@ -328,11 +388,17 @@ func run() error {
 	mux.Handle("POST /v1/uploads/{uploadId}/complete", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.Complete))))
 
 	sharingRepo := sharing.NewRepository(pg)
-	sharingSvc := sharing.NewService(sharingRepo, fileShareLookupAdapter{repo: fileRepo}, fileOrgLookupAdapter{repo: fileRepo}, fileSvc)
+	sharingSvc := sharing.NewService(sharingRepo, fileShareLookupAdapter{repo: fileRepo}, fileScopeAdapter{repo: fileRepo},
+		folderShareAdapter{folders: folderRepo, files: fileRepo}, fileSvc)
 	sharingHandler := sharing.NewHandler(sharingSvc, members)
 
 	mux.Handle("POST /v1/files/{fileId}/share", requireAuth(requireFileAccess(http.HandlerFunc(sharingHandler.Create))))
-	mux.HandleFunc("GET /v1/shares/{token}", sharingHandler.Resolve) // public — no requireAuth (that's the point of a share link)
+	mux.Handle("POST /v1/folders/{folderId}/share", requireAuth(requireFolderAccess(http.HandlerFunc(sharingHandler.CreateFolder))))
+	mux.Handle("POST /v1/orgs/{orgId}/shares", requireAuth(requireMember(http.HandlerFunc(sharingHandler.CreateBundle))))
+	// The /v1/shares/* reads are public — no requireAuth; that's the point of a share link.
+	mux.HandleFunc("GET /v1/shares/{token}", sharingHandler.Resolve)
+	mux.HandleFunc("GET /v1/shares/{token}/folders/{folderId}", sharingHandler.Children)
+	mux.HandleFunc("GET /v1/shares/{token}/files/{fileId}/download-plan", sharingHandler.DownloadPlan)
 	mux.Handle("DELETE /v1/shares/{token}", requireAuth(http.HandlerFunc(sharingHandler.Delete)))
 
 	// Remaining domain routes are registered here as each module lands

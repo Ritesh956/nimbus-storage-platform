@@ -65,15 +65,31 @@ export interface ShareLink {
   url: string;
 }
 
-export interface ResolvedShare {
-  file: {
-    id: string;
-    name: string;
-    size_bytes: number;
-    mime_type: string;
-    checksum_sha256: string;
-  };
-  download_plan: DownloadPlan;
+export interface ShareFileInfo {
+  id: string;
+  name: string;
+  size_bytes: number;
+  mime_type: string;
+  checksum_sha256: string;
+}
+
+export interface ShareFolderInfo {
+  id: string;
+  name: string;
+}
+
+// Discriminated by kind (share scopes, post-Tier-3 session): a single file
+// embeds its download plan; folder and bundle shares list entries, and each
+// file's plan is fetched on demand via shares.downloadPlan.
+export type ResolvedShare =
+  | { kind: "file"; file: ShareFileInfo; download_plan: DownloadPlan }
+  | { kind: "folder"; folder: ShareFolderInfo; folders: ShareFolderInfo[]; files: ShareFileInfo[] }
+  | { kind: "bundle"; files: ShareFileInfo[] };
+
+export interface ShareChildren {
+  folder: ShareFolderInfo;
+  folders: ShareFolderInfo[];
+  files: ShareFileInfo[];
 }
 
 export interface SearchResult {

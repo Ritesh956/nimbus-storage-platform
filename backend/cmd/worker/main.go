@@ -108,6 +108,9 @@ func run() error {
 	fileRepo := file.NewRepository(pg)
 	activitySvc := activity.NewService(activity.NewRepository(pg), live.NewPublisher(rdb))
 	processor := processing.NewProcessor(fileRepo, storageRepo, router, activitySvc, logger)
+	// Background, not blocking startup: thumbnail consumption can begin
+	// immediately; only the first PDF would wait on this.
+	go processing.WarmupPDFium(logger)
 
 	consumer, err := events.Subscribe(ctx, js, events.NewRepository(pg), processor.Process)
 	if err != nil {

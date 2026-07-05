@@ -9,10 +9,11 @@ import { useLiveEvents } from "@/lib/live";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { FileRow } from "@/components/FileRow";
 import { MoveDialog } from "@/components/MoveDialog";
+import { ShareDialog } from "@/components/ShareDialog";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { FileIcon, FolderIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
+import { FileIcon, FolderIcon, LinkIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
 
 export default function FolderPage() {
   const { orgId, folderId } = useParams<{ orgId: string; folderId: string }>();
@@ -35,6 +36,28 @@ export default function FolderPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [movingFolder, setMovingFolder] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Multi-select for bundle sharing + folder-share dialog target.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [shareTarget, setShareTarget] = useState<
+    { kind: "folder"; id: string; name: string } | { kind: "files"; orgId: string; ids: string[] } | null
+  >(null);
+
+  // Selection doesn't survive navigation — React's documented
+  // adjust-state-during-render pattern, not an effect.
+  const [selectionFolder, setSelectionFolder] = useState(folderId);
+  if (selectionFolder !== folderId) {
+    setSelectionFolder(folderId);
+    setSelected(new Set());
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function createFolder(e: FormEvent) {
     e.preventDefault();
@@ -130,6 +153,13 @@ export default function FolderPage() {
                   <span className="truncate text-sm">{f.name}</span>
                 </Link>
                 <button
+                  onClick={() => setShareTarget({ kind: "folder", id: f.id, name: f.name })}
+                  title="Share folder"
+                  className="glow-ring rounded-lg p-2 text-muted-2 transition-all hover:bg-surface-deep hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
+                >
+                  <LinkIcon size={15} />
+                </button>
+                <button
                   onClick={() => setMovingFolder({ id: f.id, name: f.name })}
                   title="Move to…"
                   className="glow-ring rounded-lg p-2 text-muted-2 transition-all hover:bg-surface-deep hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
@@ -151,9 +181,25 @@ export default function FolderPage() {
 
       {data && (
         <div className="panel overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border/60 px-4 py-3.5 sm:px-5">
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3.5 sm:px-5">
             <span className="text-sm font-medium">Files</span>
-            <span className="text-xs text-muted-2">{data.files.length}</span>
+            <span className="flex items-center gap-2">
+              {selected.size > 0 && (
+                <>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShareTarget({ kind: "files", orgId, ids: [...selected] })}
+                  >
+                    <LinkIcon size={13} />
+                    Share selected ({selected.size})
+                  </Button>
+                  <Button variant="ghost" onClick={() => setSelected(new Set())}>
+                    Clear
+                  </Button>
+                </>
+              )}
+              <span className="text-xs text-muted-2">{data.files.length}</span>
+            </span>
           </div>
           {data.files.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-5 py-10 text-center">
@@ -165,7 +211,15 @@ export default function FolderPage() {
           ) : (
             <ul>
               {data.files.map((f) => (
-                <FileRow key={f.id} file={f} orgId={orgId} folderId={folderId} onChanged={() => mutate()} />
+                <FileRow
+                  key={f.id}
+                  file={f}
+                  orgId={orgId}
+                  folderId={folderId}
+                  onChanged={() => mutate()}
+                  selected={selected.has(f.id)}
+                  onToggleSelect={() => toggleSelected(f.id)}
+                />
               ))}
             </ul>
           )}
@@ -180,6 +234,8 @@ export default function FolderPage() {
           onMoved={() => mutate()}
         />
       )}
+
+      {shareTarget && <ShareDialog target={shareTarget} onClose={() => setShareTarget(null)} />}
     </div>
   );
 }
