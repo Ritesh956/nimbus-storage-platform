@@ -18,6 +18,8 @@ const (
 	ErrForbidden    ErrorCode = "forbidden"
 	ErrNotFound     ErrorCode = "not_found"
 	ErrConflict     ErrorCode = "conflict"
+	ErrTooLarge     ErrorCode = "too_large"
+	ErrQuotaFull    ErrorCode = "quota_exceeded"
 	ErrRateLimited  ErrorCode = "rate_limited"
 	ErrInternal     ErrorCode = "internal"
 )
@@ -28,6 +30,8 @@ var statusForCode = map[ErrorCode]int{
 	ErrForbidden:    http.StatusForbidden,
 	ErrNotFound:     http.StatusNotFound,
 	ErrConflict:     http.StatusConflict,
+	ErrTooLarge:     http.StatusRequestEntityTooLarge,
+	ErrQuotaFull:    http.StatusInsufficientStorage,
 	ErrRateLimited:  http.StatusTooManyRequests,
 	ErrInternal:     http.StatusInternalServerError,
 }

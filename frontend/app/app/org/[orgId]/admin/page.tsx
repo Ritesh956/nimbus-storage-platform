@@ -1,12 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { StatCard } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { TablePanel, Th, Td, Tr } from "@/components/ui/Table";
-import { ServerIcon, PulseIcon } from "@/components/ui/Icons";
+import { ServerIcon, PulseIcon, RestoreIcon } from "@/components/ui/Icons";
 import { timeAgo } from "@/lib/format";
 
 export default function AdminPage() {
@@ -14,6 +16,18 @@ export default function AdminPage() {
   // during a live failover demo (docs/07-distributed-architecture.md §5),
   // where a node's status changes without any user action to trigger a refetch.
   const { data: nodes } = useSWR("admin-nodes", () => api.admin.nodes(), { refreshInterval: 2000 });
+  const { data: dlq, mutate: mutateDlq } = useSWR("admin-dlq", () => api.admin.dlq(), { refreshInterval: 5000 });
+  const [dlqError, setDlqError] = useState<string | null>(null);
+
+  async function retry(id: string) {
+    setDlqError(null);
+    try {
+      await api.admin.retryDeadEvent(id);
+      await mutateDlq();
+    } catch (err) {
+      setDlqError(err instanceof ApiError ? err.message : "retry failed");
+    }
+  }
 
   const healthy = nodes?.filter((n) => n.status === "healthy").length ?? 0;
   const down = (nodes?.length ?? 0) - healthy;
@@ -84,6 +98,54 @@ export default function AdminPage() {
           ))}
         </tbody>
       </TablePanel>
+
+      <TablePanel title="Dead-letter queue">
+        <thead>
+          <tr>
+            <Th>Event</Th>
+            <Th className="hidden md:table-cell">Error</Th>
+            <Th>Status</Th>
+            <Th className="text-right">Actions</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {dlq?.events.map((e) => (
+            <Tr key={e.id}>
+              <Td>
+                <span className="block font-mono text-xs">{e.subject}</span>
+                <span className="block text-[11px] text-muted-2">
+                  {timeAgo(e.created_at)} · {e.deliveries} deliveries
+                </span>
+              </Td>
+              <Td className="hidden max-w-64 md:table-cell">
+                <span className="block truncate text-xs text-muted" title={e.error}>
+                  {e.error}
+                </span>
+              </Td>
+              <Td>
+                <Badge tone={e.status === "dead" ? "danger" : "success"}>{e.status}</Badge>
+              </Td>
+              <Td className="text-right">
+                {e.status === "dead" && (
+                  <Button variant="secondary" onClick={() => retry(e.id)}>
+                    <RestoreIcon size={12} />
+                    Retry
+                  </Button>
+                )}
+              </Td>
+            </Tr>
+          ))}
+          {dlq && dlq.events.length === 0 && (
+            <Tr>
+              <Td className="text-xs text-muted-2">No dead events — every delivery has succeeded or is still retrying.</Td>
+              <Td className="hidden md:table-cell" />
+              <Td />
+              <Td />
+            </Tr>
+          )}
+        </tbody>
+      </TablePanel>
+      {dlqError && <p className="-mt-3 text-xs text-danger">{dlqError}</p>}
     </div>
   );
 }

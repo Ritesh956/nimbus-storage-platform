@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -21,12 +22,13 @@ const (
 // ack on success, nak (redelivery, up to maxDeliver with the backoff
 // schedule below) on error (docs/07-distributed-architecture.md §3).
 //
-// A dead-letter subject for permanently-failed messages
-// (nimbus.uploads.completed.dlq) is documented but not built — a real gap,
-// not silently dropped: NATS's own max-deliveries advisory would be the
-// natural hook for it, deferred as a roadmap item since it doesn't block
-// the core pipeline this exists to prove works.
-func Subscribe(ctx context.Context, js jetstream.JetStream, handler func(context.Context, UploadCompleted) error) (jetstream.Consumer, error) {
+// A message failing its final (maxDeliver'th) delivery is dead-lettered:
+// recorded in the dead_events table via dead, then Term'd. Detecting the
+// final delivery inline (msg.Metadata().NumDelivered) was chosen over the
+// NATS max-deliveries advisory the original design sketched — same
+// guarantee, no second subscription, and the failure error is still in
+// hand to store alongside the payload (backlog #9).
+func Subscribe(ctx context.Context, js jetstream.JetStream, dead *Repository, handler func(context.Context, UploadCompleted) error) (jetstream.Consumer, error) {
 	cons, err := js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
 		Durable:       ThumbnailConsumerName,
 		AckPolicy:     jetstream.AckExplicitPolicy,
@@ -45,6 +47,18 @@ func Subscribe(ctx context.Context, js jetstream.JetStream, handler func(context
 			return
 		}
 		if err := handler(ctx, evt); err != nil {
+			if md, mdErr := msg.Metadata(); mdErr == nil && md.NumDelivered >= maxDeliver {
+				// Final attempt failed — dead-letter and stop redelivery. If
+				// the insert itself fails there's nothing left to do but log:
+				// delivery attempts are exhausted either way.
+				if insErr := dead.InsertDeadEvent(ctx, msg.Subject(), msg.Data(), err.Error(), int(md.NumDelivered)); insErr != nil {
+					slog.Default().Error("failed to record dead event — event is lost", "error", insErr, "event_id", evt.EventID, "handler_error", err)
+				} else {
+					slog.Default().Warn("event dead-lettered after exhausting redeliveries", "event_id", evt.EventID, "deliveries", md.NumDelivered, "error", err)
+				}
+				_ = msg.Term()
+				return
+			}
 			_ = msg.Nak()
 			return
 		}

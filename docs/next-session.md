@@ -4,7 +4,7 @@ Updated at the end of the Tier 1 backlog session (2026-07-05). Read [docs/00-pro
 
 ## Next objective: continue the agreed feature backlog
 
-All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 1 session. **Tier 1 (#1–#6) is complete and verified live** — see docs/00-project-state.md item 17. Remaining agreed sequence: **#8 → #7 → #10** ("safe to expose" → "best interview story"). Full backlog as presented and accepted:
+All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 1 and Tier 2 sessions (both 2026-07-05). **Tiers 1 and 2 are complete and verified live** — see docs/00-project-state.md items 17–18. Next per the agreed sequence: **#10 chunk garbage collection** (the "best interview story" item), then the rest of Tier 3. The go-public VPS plan is also now unblocked backend-side (Tier 2 was its blocker set); it still needs the user to provision a VPS. Full backlog as presented and accepted:
 
 **Tier 1 — backend already does it, UI doesn't show it — ✅ ALL DONE (2026-07-05 session)**
 1. ~~**Show thumbnails in the UI**~~ — done: `GET /v1/files/{fileId}/thumbnail` (presigned targets, ring-preference healthy-first), `has_thumbnail`/size/mime on the children listing, FileRow thumb + preview modal.
@@ -14,10 +14,10 @@ All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 
 5. ~~**Share expiry in the UI**~~ — done: 1h/1d/7d/never dropdown; expiry proven end-to-end (forced past-expiry in DB → public page refuses).
 6. ~~**Breadcrumbs**~~ — done: `GET /v1/folders/{folderId}/path` + trail in the folder view.
 
-**Tier 2 — blockers before the VPS go-public plan**
-7. **Rate limiting** — per-user/per-IP Redis token bucket middleware (designed in docs/04-lld.md, never built).
-8. **Upload caps + org quotas** — no size limit and no quota exist at all; max-file-size check at upload-init + per-org bytes quota (sizes already tracked in Postgres).
-9. **DLQ visibility** — failed worker events route to a dead-letter subject nothing reads; admin endpoint listing dead events + retry button.
+**Tier 2 — blockers before the VPS go-public plan — ✅ ALL DONE (2026-07-05 session, same day as Tier 1)**
+7. ~~**Rate limiting**~~ — done: `internal/platform/ratelimit` Redis token bucket (Lua, atomic), per-user via signature-only `PeekUserID` / per-IP fallback, 25 rps/burst 50 defaults, fail-open, health/metrics exempt.
+8. ~~**Upload caps + org quotas**~~ — done: `NIMBUS_MAX_UPLOAD_BYTES` (100 MiB → 413 `too_large`) + `NIMBUS_ORG_QUOTA_BYTES` (10 GiB → 507 `quota_exceeded`), enforced at init and re-checked at complete.
+9. ~~**DLQ visibility**~~ — done: `dead_events` table (migration 000006) written by the worker on final failed delivery, `GET /v1/admin/dlq` + retry endpoint, admin-page panel. Design revised from a DLQ subject to a Postgres table — see docs/07 §3.
 
 **Tier 3 — distributed-systems flex (portfolio meat)**
 10. **Chunk garbage collection** — content-addressed dedup means deleting a file never frees storage; purged files leave orphaned chunks in MinIO forever. Refcount chunks + background sweep in the worker (watch the in-flight-upload-references-chunk-being-reaped race). The most staff-level item here.
@@ -30,6 +30,16 @@ All 15 roadmap days are done, plus the Dashdark X/Vercel session, plus the Tier 
 15. **TOTP 2FA** — standard library, pairs with the existing auth_audit_log.
 
 After (or alongside) the backlog, the other open thread is the **deferred go-public plan**: the user wanted the backend on a VPS but held off since the VPS account/payment is theirs to create. Full agreed recipe is in docs/00-project-state.md "Known issues" — don't re-derive it. Prereq from the user: a VPS IP + SSH key. Tier 2 above is the blocker set for it.
+
+## What the Tier 2 session actually built (2026-07-05, after Tier 1)
+
+See docs/00-project-state.md item 18 for the full list. Notes worth carrying:
+
+- **Quota semantics are deliberate:** usage is logical bytes (every stored version, trashed included) — dedup doesn't discount it, purge is what frees it. Both limits re-checked at `/complete` because init's declared size is client-supplied. New error codes `too_large` (413) / `quota_exceeded` (507) joined the envelope table.
+- **Rate limiter fails open** on Redis errors and exempts `/healthz`/`/readyz`/`/metrics`. Keying uses `auth.Service.PeekUserID` (signature check only — deliberately no blacklist round-trip; it's an identity for bucketing, not an authorization decision).
+- **DLQ is a Postgres table, not a NATS subject** — design revision recorded in docs/07 §3. The worker detects the final delivery inline (`msg.Metadata().NumDelivered >= maxDeliver`), inserts into `dead_events`, then Terms. Retry = republish stored payload; a republish that fails again simply dead-letters as a fresh row. The retry endpoint flips dead→retried *before* publishing (no double-publish on concurrent clicks) and reverts on publish failure.
+- **Verification trick worth reusing:** to force a real DLQ event, commit a chunk, `rm -rf` its object dir from all 3 MinIO nodes (`docker exec nimbus-minio-node-N-1 rm -rf /data/nimbus-chunks/<hash>`), *then* call `/complete` — the worker fails all 5 deliveries (~111s with the backoff schedule). Restore by re-PUTting the bytes via a fresh upload session's presigned targets (no commit needed), then Retry from the admin UI.
+- Tiny-limit overrides for testing 507/429 live in a throwaway compose override (scratchpad, not committed): `NIMBUS_ORG_QUOTA_BYTES=1000000`, `NIMBUS_RATE_LIMIT_RPS=2`, `NIMBUS_RATE_LIMIT_BURST=5` on nimbus-api.
 
 ## What the Tier 1 session actually built (2026-07-05)
 
@@ -53,7 +63,7 @@ See docs/00-project-state.md item 17 for the full feature list and docs/06-api-d
 ## Important context (carried forward, still true)
 
 - **Verification pattern to keep using**: build, then check against the real thing — this session's FR-8 verification (deliberately corrupting a live MinIO replica's on-disk bytes via `kubectl exec`, not just reading the code) is a good example of the depth this project's convention expects.
-- **Known real gaps** (don't assume otherwise): no rate limiting, no DLQ consumer, no `internal/admin` module, no per-org usage endpoint (FR-26, now explicitly a v1 non-goal), HPA stub inert (no metrics-server), Helm chart not in CI, `chaos-node-kill.js`/`smoke-folders.sh`/`smoke-thumbnails.js` are Compose-only (hardcoded `docker compose`/`docker exec <container-name>`, no kind equivalent). Full list in docs/00-project-state.md.
+- **Known real gaps** (don't assume otherwise): no `internal/admin` module (the admin reads live in `storage.Handler` and `events.DLQHandler`), no per-org usage endpoint (FR-26, explicitly a v1 non-goal — though `file.Repository.OrgUsageBytes` now exists internally for quota enforcement, so exposing it would be cheap if ever wanted), HPA stub inert (no metrics-server), Helm chart not in CI, `chaos-node-kill.js`/`smoke-folders.sh`/`smoke-thumbnails.js` are Compose-only (hardcoded `docker compose`/`docker exec <container-name>`, no kind equivalent). ~~No rate limiting / no DLQ consumer~~ — both built in the Tier 2 session. Full list in docs/00-project-state.md.
 - A git remote is configured (`origin` → `github.com/Ritesh956/nimbus-storage-platform`, private). Commit and push at the end of each day/session, confirming with the user before each push. **Branch protection is now live on `main`** — direct pushes still work, but PRs need the 4 CI jobs green to merge.
 
 ## Warnings

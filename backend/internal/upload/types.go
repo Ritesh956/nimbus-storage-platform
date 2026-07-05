@@ -61,6 +61,8 @@ var (
 	ErrUploadNotInProgress = errors.New("upload is not in progress")
 	ErrEmptyChunkOrder     = errors.New("chunk_order must not be empty")
 	ErrMissingChunks       = errors.New("one or more chunks in chunk_order were never committed")
+	ErrFileTooLarge        = errors.New("file exceeds the maximum upload size")
+	ErrQuotaExceeded       = errors.New("organization storage quota exceeded")
 	// ErrAlreadyCompleting signals a concurrent /complete call for the same
 	// upload won the race (CAS on status = 'in_progress' matched zero
 	// rows). The service re-fetches and returns the winner's result rather

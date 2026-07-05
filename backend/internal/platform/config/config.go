@@ -38,6 +38,16 @@ type Config struct {
 	ReplicationFactor int // N
 	WriteQuorum       int // W
 
+	// MaxUploadBytes / OrgQuotaBytes enforce upload caps and per-org
+	// storage quotas (post-v1 backlog #8). 0 disables the check.
+	MaxUploadBytes int64
+	OrgQuotaBytes  int64
+
+	// RateLimitRPS / RateLimitBurst parameterize the per-caller token
+	// bucket (docs/04-lld.md §4). RPS 0 disables rate limiting entirely.
+	RateLimitRPS   int
+	RateLimitBurst int
+
 	StorageNodes   []StorageNode
 	MinIOAccessKey string
 	MinIOSecretKey string
@@ -58,6 +68,10 @@ func Load() (Config, error) {
 		ChunkSizeBytes:     8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
 		ReplicationFactor:  2,
 		WriteQuorum:        2,
+		MaxUploadBytes:     100 * 1024 * 1024,       // 100 MiB per file
+		OrgQuotaBytes:      10 * 1024 * 1024 * 1024, // 10 GiB per org
+		RateLimitRPS:       25,
+		RateLimitBurst:     50,
 	}
 
 	var err error
@@ -80,6 +94,34 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("NIMBUS_CHUNK_SIZE_BYTES: %w", err)
 		}
 		cfg.ChunkSizeBytes = n
+	}
+	if v := os.Getenv("NIMBUS_MAX_UPLOAD_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_MAX_UPLOAD_BYTES: %w", err)
+		}
+		cfg.MaxUploadBytes = n
+	}
+	if v := os.Getenv("NIMBUS_ORG_QUOTA_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_ORG_QUOTA_BYTES: %w", err)
+		}
+		cfg.OrgQuotaBytes = n
+	}
+	if v := os.Getenv("NIMBUS_RATE_LIMIT_RPS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_RATE_LIMIT_RPS: %w", err)
+		}
+		cfg.RateLimitRPS = n
+	}
+	if v := os.Getenv("NIMBUS_RATE_LIMIT_BURST"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_RATE_LIMIT_BURST: %w", err)
+		}
+		cfg.RateLimitBurst = n
 	}
 	if v := os.Getenv("NIMBUS_REPLICATION_FACTOR"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -157,6 +199,9 @@ func (c Config) validate() error {
 	}
 	if c.WriteQuorum > c.ReplicationFactor {
 		return fmt.Errorf("NIMBUS_WRITE_QUORUM (%d) cannot exceed NIMBUS_REPLICATION_FACTOR (%d)", c.WriteQuorum, c.ReplicationFactor)
+	}
+	if c.RateLimitRPS > 0 && c.RateLimitBurst < 1 {
+		return fmt.Errorf("NIMBUS_RATE_LIMIT_BURST must be at least 1 when rate limiting is enabled")
 	}
 	return nil
 }

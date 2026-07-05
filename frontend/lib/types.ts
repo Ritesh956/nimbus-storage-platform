@@ -94,6 +94,17 @@ export interface ActivityEvent {
   created_at: string;
 }
 
+export interface DeadEvent {
+  id: string;
+  subject: string;
+  payload: Record<string, unknown>;
+  error: string;
+  deliveries: number;
+  status: "dead" | "retried";
+  created_at: string;
+  retried_at?: string;
+}
+
 export interface StorageNode {
   id: string;
   endpoint: string;

@@ -318,6 +318,20 @@ func (r *Repository) RestoreVersion(ctx context.Context, fileID, versionID strin
 		versionID, fileID))
 }
 
+// OrgUsageBytes sums every stored version's size across the org — the
+// logical bytes a user sees stored, not dedup-adjusted physical bytes.
+// Trashed files still count (their bytes are only freed by purge, and
+// excluding them would make trashing a quota-evasion trick); satisfies
+// upload.UsageReader for quota enforcement (post-v1 backlog #8).
+func (r *Repository) OrgUsageBytes(ctx context.Context, orgID string) (int64, error) {
+	var total int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(v.size_bytes), 0)
+		 FROM file_versions v JOIN files f ON f.id = v.file_id
+		 WHERE f.org_id = $1`, orgID).Scan(&total)
+	return total, err
+}
+
 // SetThumbnailKey records where nimbus-worker stored a generated thumbnail
 // (docs/02-system-design.md §6) — called only after the storage write
 // itself has already succeeded, so a non-nil thumbnail_key is reliable

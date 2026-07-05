@@ -2,6 +2,7 @@ import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "./token
 import type {
   ActivityEvent,
   ChunkTarget,
+  DeadEvent,
   DownloadPlan,
   FileNode,
   FileSummary,
@@ -191,5 +192,7 @@ export const api = {
 
   admin: {
     nodes: () => request<StorageNode[]>("/v1/admin/nodes"),
+    dlq: () => request<{ events: DeadEvent[] }>("/v1/admin/dlq"),
+    retryDeadEvent: (id: string) => request<{ status: string }>(`/v1/admin/dlq/${id}/retry`, { method: "POST" }),
   },
 };

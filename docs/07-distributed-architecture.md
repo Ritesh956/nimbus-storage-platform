@@ -35,7 +35,7 @@ Pub/Sub is an optimization, not the source of truth: a replica that misses a pub
 | Publish subject | `nimbus.uploads.completed` on `CompleteUpload` |
 | Consumer | `thumbnail-worker`, durable, explicit ack, `max_deliver=5` |
 | Retry backoff | NATS redelivery backoff `[1s, 5s, 15s, 30s, 60s]` |
-| Failure path | after 5 failed deliveries, message routed to `nimbus.uploads.completed.dlq` (a second consumer just logs + increments a Prometheus counter — no automated remediation in v1, intentionally: a human looks at the DLQ) |
+| Failure path | a message failing its 5th (final) delivery is dead-lettered into the Postgres `dead_events` table (payload + handler error + delivery count) and Term'd — built in the Tier 2 backlog session, **revised from the original sketch** of a `nimbus.uploads.completed.dlq` subject: a queryable table with a status column is what the admin DLQ endpoints (`GET /v1/admin/dlq`, `POST /v1/admin/dlq/{id}/retry` → republish to the original subject) actually need, and detecting the final delivery inline via `msg.Metadata().NumDelivered` avoids a second subscription while keeping the failure error in hand to store. Remediation is human-triggered retry from the admin UI, intentionally — no automated replay. |
 
 Event payload: `{event_id, file_id, version_id, org_id, request_id}` — `request_id` is the correlation ID carried from the original HTTP request (HLD §2) so a DLQ'd message can be traced back to the upload that produced it.
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"nimbus/internal/platform/db"
 	"nimbus/internal/platform/httpserver"
 	"nimbus/internal/platform/logging"
+	"nimbus/internal/platform/ratelimit"
 	"nimbus/internal/search"
 	"nimbus/internal/sharing"
 	"nimbus/internal/storage"
@@ -235,6 +237,10 @@ func run() error {
 
 	mux.Handle("GET /v1/admin/nodes", requireAuth(http.HandlerFunc(storageHandler.ListNodes)))
 
+	dlqHandler := events.NewDLQHandler(events.NewRepository(pg), eventPublisher)
+	mux.Handle("GET /v1/admin/dlq", requireAuth(http.HandlerFunc(dlqHandler.List)))
+	mux.Handle("POST /v1/admin/dlq/{id}/retry", requireAuth(http.HandlerFunc(dlqHandler.Retry)))
+
 	fileRepo := file.NewRepository(pg)
 
 	folderSvc := folder.NewService(folderRepo)
@@ -281,7 +287,7 @@ func run() error {
 	// already match upload.ActivityRecorder/EventPublisher — all passed
 	// directly, no adapters needed.
 	uploadRepo := upload.NewRepository(pg)
-	uploadSvc := upload.NewService(uploadRepo, router, fileRepo, folderOrgLookupAdapter{repo: folderRepo}, members, activitySvc, eventPublisher, cfg.ReplicationFactor)
+	uploadSvc := upload.NewService(uploadRepo, router, fileRepo, folderOrgLookupAdapter{repo: folderRepo}, members, activitySvc, eventPublisher, fileRepo, cfg.ReplicationFactor, cfg.MaxUploadBytes, cfg.OrgQuotaBytes)
 	uploadHandler := upload.NewHandler(uploadSvc)
 	requireUploadAccess := upload.RequireAccess(uploadRepo, members)
 
@@ -302,13 +308,29 @@ func run() error {
 	// Remaining domain routes are registered here as each module lands
 	// (admin org-usage).
 
-	handler := httpserver.Chain(mux,
+	middlewares := []func(http.Handler) http.Handler{
 		httpserver.CORS(cfg.CORSOrigin), // outermost: must short-circuit OPTIONS preflight before mux routing
 		httpserver.RequestID,
 		httpserver.Recoverer(logger),
 		httpserver.RequestLogger(logger),
 		httpserver.Metrics(mux),
-	)
+	}
+	if cfg.RateLimitRPS > 0 {
+		limiter := ratelimit.NewLimiter(rdb, cfg.RateLimitRPS, cfg.RateLimitBurst, logger)
+		// Bucket key: authenticated callers by user ID (signature-only peek —
+		// no blacklist round-trip; real auth still happens in Middleware),
+		// everyone else by client IP. Innermost of the global chain per
+		// docs/04-lld.md §4, so 429s still hit the logger and metrics.
+		middlewares = append(middlewares, limiter.Middleware(func(r *http.Request) string {
+			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+				if uid := authSvc.PeekUserID(strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))); uid != "" {
+					return "user:" + uid
+				}
+			}
+			return "ip:" + ratelimit.ClientIP(r)
+		}))
+	}
+	handler := httpserver.Chain(mux, middlewares...)
 
 	srv := httpserver.New(":"+cfg.HTTPPort, handler)
 	return httpserver.Run(ctx, srv, logger, 15*time.Second)

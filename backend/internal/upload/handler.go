@@ -154,6 +154,10 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, httpserver.ErrInvalid, "chunk_order must not be empty")
 	case errors.Is(err, ErrMissingChunks):
 		httpserver.WriteError(w, r, httpserver.ErrInvalid, "one or more chunks in chunk_order were never committed")
+	case errors.Is(err, ErrFileTooLarge):
+		httpserver.WriteError(w, r, httpserver.ErrTooLarge, "file exceeds the maximum upload size")
+	case errors.Is(err, ErrQuotaExceeded):
+		httpserver.WriteError(w, r, httpserver.ErrQuotaFull, "organization storage quota exceeded")
 	case errors.Is(err, storage.ErrInsufficientHealthyNodes):
 		httpserver.WriteError(w, r, httpserver.ErrInternal, "not enough healthy storage nodes to place this chunk")
 	case errors.Is(err, storage.ErrNoNodes):

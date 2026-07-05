@@ -19,8 +19,10 @@ REST/JSON, versioned under `/v1`. Auth via `Authorization: Bearer <access_token>
 | 403 | `forbidden` |
 | 404 | `not_found` |
 | 409 | `conflict` |
-| 429 | `rate_limited` (not yet enforced anywhere — rate limiting is unbuilt, see docs/00-project-state.md) |
+| 413 | `too_large` (upload exceeds `NIMBUS_MAX_UPLOAD_BYTES`, default 100 MiB — Tier 2 session) |
+| 429 | `rate_limited` (per-caller Redis token bucket, default 25 rps / burst 50 — built in the Tier 2 session; keyed by user ID for authenticated callers, client IP otherwise; `/healthz`, `/readyz`, `/metrics` exempt; fails open if Redis is down) |
 | 500 | `internal` |
+| 507 | `quota_exceeded` (upload would push the org past `NIMBUS_ORG_QUOTA_BYTES`, default 10 GiB — Tier 2 session) |
 
 Mutating endpoints that must be safe to retry accept an `Idempotency-Key` header (currently only `/v1/uploads/{uploadId}/complete`).
 
@@ -83,6 +85,8 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 
 Resumability: a client that drops mid-upload re-calls `/chunks/check` on reconnect — already-committed chunks come back as not-missing. No separate "resume" endpoint.
 
+**Limits (Tier 2 session):** `POST /v1/uploads` rejects `size_bytes` over `NIMBUS_MAX_UPLOAD_BYTES` (413 `too_large`) or past the org's `NIMBUS_ORG_QUOTA_BYTES` (507 `quota_exceeded`; usage = sum of every stored version's bytes org-wide, trashed included — purge is what frees quota). `/complete` re-checks both against the completed size, since nothing forces it to match what init declared. 0 disables either limit.
+
 ## 6. Download
 
 | Method | Path | 2xx |
@@ -106,11 +110,13 @@ Targets are presigned GET URLs to the chunk's *actually recorded* replica locati
 | GET | `/v1/orgs/{orgId}/search?q=&type=&owner=&date_from=&date_to=&size_min=&size_max=&cursor=&limit=` | 200 `{results: [{file_id, name, folder_id, owner_id, created_at, size_bytes, mime_type}], next_cursor}` | `type` is a prefix match on mime_type (e.g. `image` matches `image/png`) |
 | GET | `/v1/orgs/{orgId}/activity?cursor=&limit=` | 200 `{events: [{verb, target_type, target_id, actor, created_at}], next_cursor}` | `verb` is `"uploaded"` (written synchronously by nimbus-api) or `"thumbnail_generated"` (written by nimbus-worker, `actor: null`) |
 
-## 9. Admin — `internal/storage`
+## 9. Admin — `internal/storage`, `internal/events`
 
 | Method | Path | 2xx | Notes |
 |---|---|---|---|
 | GET | `/v1/admin/nodes` | 200 `[{id, endpoint, status, last_heartbeat_at}]` | this is what's on screen during the chaos demo; requires auth only, no platform-admin role exists |
+| GET | `/v1/admin/dlq` | 200 `{events: [{id, subject, payload, error, deliveries, status, created_at, retried_at?}]}` | dead-lettered NATS events (newest first, cap 100) — Tier 2 session; same auth-only posture as `/admin/nodes` |
+| POST | `/v1/admin/dlq/{id}/retry` | 200 `{status: "retried"}` | republishes the stored payload to its original subject; 409 if already retried |
 
 **Not implemented**: per-org usage (`GET /v1/admin/orgs/{orgId}/usage`, total bytes/file count) — was sketched in an earlier draft of this doc but never built; no roadmap day currently calls for it. `internal/admin` is a reserved, empty package (see docs/08-folder-structure.md).
 

@@ -46,6 +46,13 @@ type EventPublisher interface {
 	PublishUploadCompleted(ctx context.Context, evt events.UploadCompleted) error
 }
 
+// UsageReader reports an org's stored bytes, for quota enforcement
+// (post-v1 backlog #8). Satisfied directly by file.Repository, same
+// no-adapter pattern as FileCreator.
+type UsageReader interface {
+	OrgUsageBytes(ctx context.Context, orgID string) (int64, error)
+}
+
 type Service struct {
 	repo              *Repository
 	router            *storage.Router
@@ -54,10 +61,15 @@ type Service struct {
 	members           MembershipChecker
 	activity          ActivityRecorder
 	publisher         EventPublisher
+	usage             UsageReader
 	replicationFactor int
+	// maxUploadBytes / orgQuotaBytes are enforcement limits; 0 disables the
+	// respective check (docs/06-api-design.md §5).
+	maxUploadBytes int64
+	orgQuotaBytes  int64
 }
 
-func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, replicationFactor int) *Service {
+func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, usage UsageReader, replicationFactor int, maxUploadBytes, orgQuotaBytes int64) *Service {
 	return &Service{
 		repo:              repo,
 		router:            router,
@@ -66,7 +78,10 @@ func NewService(repo *Repository, router *storage.Router, files FileCreator, fol
 		members:           members,
 		activity:          activity,
 		publisher:         publisher,
+		usage:             usage,
 		replicationFactor: replicationFactor,
+		maxUploadBytes:    maxUploadBytes,
+		orgQuotaBytes:     orgQuotaBytes,
 	}
 }
 
@@ -87,6 +102,12 @@ func (s *Service) CheckChunks(ctx context.Context, hashes []string) ([]string, e
 // version to an existing file (docs/09-roadmap.md Day 6) — folderID/name
 // are then derived from that file rather than taken from the request.
 func (s *Service) InitUpload(ctx context.Context, userID, folderID, targetFileID, name string, sizeBytes int64, mimeType string) (Upload, error) {
+	// Size cap first: needs no DB access and the limit is global config, so
+	// rejecting before authorization leaks nothing.
+	if s.maxUploadBytes > 0 && sizeBytes > s.maxUploadBytes {
+		return Upload{}, ErrFileTooLarge
+	}
+
 	var orgID string
 	var err error
 	var targetPtr *string
@@ -115,7 +136,28 @@ func (s *Service) InitUpload(ctx context.Context, userID, folderID, targetFileID
 	if !ok {
 		return Upload{}, ErrForbidden
 	}
+	if err := s.checkQuota(ctx, orgID, sizeBytes); err != nil {
+		return Upload{}, err
+	}
 	return s.repo.CreateUpload(ctx, orgID, folderID, name, sizeBytes, mimeType, userID, targetPtr)
+}
+
+// checkQuota rejects a declared size that would push the org past its
+// bytes quota. Usage counts every stored version (incl. trashed files —
+// their bytes are only freed by purge), so quota is logical bytes, not
+// dedup-adjusted physical bytes: what a user *sees* stored is what counts.
+func (s *Service) checkQuota(ctx context.Context, orgID string, sizeBytes int64) error {
+	if s.orgQuotaBytes <= 0 {
+		return nil
+	}
+	used, err := s.usage.OrgUsageBytes(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	if used+sizeBytes > s.orgQuotaBytes {
+		return ErrQuotaExceeded
+	}
+	return nil
 }
 
 // InitChunk resolves N healthy replicas for hash and presigns a PUT target
@@ -219,6 +261,16 @@ func (s *Service) CompleteUpload(ctx context.Context, u Upload, idempotencyKey s
 	}
 	if len(chunkOrder) == 0 {
 		return "", "", ErrEmptyChunkOrder
+	}
+	// Re-check limits against the *completed* size — init's declared size is
+	// client-supplied and nothing forces the two to agree. Concurrent
+	// completes racing past the quota check together is accepted at this
+	// project's scope (same single-actor rationale as folder.RestoreCascade).
+	if s.maxUploadBytes > 0 && sizeBytes > s.maxUploadBytes {
+		return "", "", ErrFileTooLarge
+	}
+	if err := s.checkQuota(ctx, u.OrgID, sizeBytes); err != nil {
+		return "", "", err
 	}
 	missing, err := s.repo.FindMissingChunks(ctx, chunkOrder)
 	if err != nil {

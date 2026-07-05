@@ -146,6 +146,8 @@ func (s *UploadService) CommitChunk(ctx context.Context, uploadID string, hash s
 
 Rate limiter and auth run *before* handler-level validation so abuse is rejected as cheaply as possible.
 
+The rate limiter (built in the Tier 2 backlog session — `internal/platform/ratelimit`) is a Redis token bucket run as a Lua script (atomic refill+spend, shared across api replicas). Bucket key: user ID when the request carries a signature-valid access token (`auth.Service.PeekUserID` — signature check only, no blacklist round-trip; real authorization still happens in authMiddleware), else client IP (first X-Forwarded-For hop, for the eventual reverse-proxy deployment). Defaults 25 rps / burst 50 (`NIMBUS_RATE_LIMIT_RPS`/`_BURST`, RPS 0 disables). `/healthz`, `/readyz`, `/metrics` are exempt — fixed-interval pollers must not eat a caller's budget. Redis failure fails open: degraded abuse protection beats turning a Redis blip into an API outage.
+
 ## 5. Concurrency notes worth stating explicitly
 
 - `Router.Resolve` is called on the hot path (every chunk init/read) and must not block on network I/O — it only ever touches in-memory state (`r.ring`, `r.health`), both kept current by background goroutines. This is the key design property that makes failover fast: the hot path never waits on a health probe.

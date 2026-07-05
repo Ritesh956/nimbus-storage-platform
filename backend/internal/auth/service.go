@@ -149,6 +149,20 @@ func (s *Service) VerifyAccessToken(ctx context.Context, token string) (userID s
 	return userID, nil
 }
 
+// PeekUserID extracts the user ID from a signature-valid access token
+// without the blacklist round-trip VerifyAccessToken does — for callers
+// that only need a stable caller identity (the rate limiter's bucket key),
+// not an authorization decision. Empty string on any failure; a request
+// carrying a bad token just gets keyed some other way (per-IP), and real
+// authorization still happens in Middleware.
+func (s *Service) PeekUserID(token string) string {
+	userID, _, _, err := s.issuer.verify(token)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
+
 func blacklistKey(jti string) string { return "nimbus:blacklist:" + jti }
 
 func newRefreshToken() (raw, hash string) {

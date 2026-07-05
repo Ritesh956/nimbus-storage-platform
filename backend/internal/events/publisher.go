@@ -23,3 +23,11 @@ func (p *Publisher) PublishUploadCompleted(ctx context.Context, evt UploadComple
 	_, err = p.js.Publish(ctx, UploadCompletedSubject, data)
 	return err
 }
+
+// PublishRaw republishes an already-serialized payload to its original
+// subject — the DLQ retry path, which must not need to understand every
+// payload type a subject might carry.
+func (p *Publisher) PublishRaw(ctx context.Context, subject string, payload []byte) error {
+	_, err := p.js.Publish(ctx, subject, payload)
+	return err
+}

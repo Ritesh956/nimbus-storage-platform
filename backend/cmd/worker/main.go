@@ -106,7 +106,7 @@ func run() error {
 	activitySvc := activity.NewService(activity.NewRepository(pg))
 	processor := processing.NewProcessor(fileRepo, storageRepo, router, activitySvc, logger)
 
-	consumer, err := events.Subscribe(ctx, js, processor.Process)
+	consumer, err := events.Subscribe(ctx, js, events.NewRepository(pg), processor.Process)
 	if err != nil {
 		return fmt.Errorf("subscribe to upload.completed: %w", err)
 	}
