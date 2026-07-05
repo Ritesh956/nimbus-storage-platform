@@ -59,6 +59,12 @@ services:
     ports: ["9020:9000", "9021:9001"]
     volumes: ["minio3:/data"]
 
+  # SMTP catcher for password-reset email (backlog #14): accepts any mail on
+  # 1025 and shows it in a web UI on 8025 — nothing ever leaves the machine.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025", "1025:1025"]
+
   migrate:
     image: migrate/migrate:v4.17.1
     volumes: ["../backend/migrations:/migrations"]
@@ -79,6 +85,7 @@ services:
       NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
+      NIMBUS_SMTP_ADDR: mailpit:1025
     ports: ["8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }

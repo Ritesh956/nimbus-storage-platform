@@ -34,6 +34,14 @@ type Config struct {
 	RefreshTokenTTL    time.Duration
 	TrashRetentionDays int
 
+	// SMTPAddr is the transactional-mail relay (backlog #14 — Mailpit in
+	// the compose stack). Empty disables email entirely; password-reset
+	// links are logged instead of sent. SMTPFrom is the bare sender
+	// address; WebBaseURL is the frontend origin reset links point at.
+	SMTPAddr   string
+	SMTPFrom   string
+	WebBaseURL string
+
 	ChunkSizeBytes    int64
 	ReplicationFactor int // N
 	WriteQuorum       int // W
@@ -72,6 +80,9 @@ func Load() (Config, error) {
 		RedisAddr:          getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
 		NATSURL:            getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
 		JWTSecret:          os.Getenv("NIMBUS_JWT_SECRET"),
+		SMTPAddr:           os.Getenv("NIMBUS_SMTP_ADDR"),
+		SMTPFrom:           getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
+		WebBaseURL:         getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
 		MinIOAccessKey:     os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
 		MinIOSecretKey:     os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
 		TrashRetentionDays: 30,

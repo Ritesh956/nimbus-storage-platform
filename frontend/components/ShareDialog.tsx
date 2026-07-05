@@ -48,7 +48,16 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
           : await api.orgs.createBundleShare(target.orgId, target.ids, expiresAt);
       // Point at the frontend's own /shares page, not the backend's raw
       // JSON URL — same reasoning as FileRow.createShare.
-      setLink({ ...created, url: `${window.location.origin}/shares/${created.token}`, expiresAt: expiresAt ?? null });
+      const url = `${window.location.origin}/shares/${created.token}`;
+      setLink({ ...created, url, expiresAt: expiresAt ?? null });
+      // Auto-copy so sharing is one click; the Copy button stays as the
+      // fallback for when the clipboard write is refused (unfocused tab).
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+      } catch {
+        setCopied(false);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "failed to create share link");
     } finally {

@@ -147,6 +147,111 @@ func (r *Repository) RevokeFamilyByTokenHash(ctx context.Context, tokenHash stri
 	return userID, err
 }
 
+// CreatePasswordResetToken stores the hash of a freshly-issued reset token
+// (backlog #14). Multiple live tokens per user are allowed — each is
+// single-use and expires on its own clock.
+func (r *Repository) CreatePasswordResetToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3, $4)`,
+		idgen.NewUUID(), userID, tokenHash, expiresAt)
+	return err
+}
+
+// ResetPassword atomically consumes a reset token, rewrites the user's
+// password hash, and revokes every refresh-token family the user has — a
+// reset means the old credential may be compromised, so no session issued
+// under it survives.
+func (r *Repository) ResetPassword(ctx context.Context, tokenHash, newPasswordHash string) (userID string, err error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	var usedAt *time.Time
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx,
+		`SELECT user_id, used_at, expires_at FROM password_reset_tokens
+		 WHERE token_hash = $1 FOR UPDATE`,
+		tokenHash,
+	).Scan(&userID, &usedAt, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrInvalidResetToken
+	}
+	if err != nil {
+		return "", err
+	}
+	if usedAt != nil || time.Now().After(expiresAt) {
+		return "", ErrInvalidResetToken
+	}
+
+	if _, err = tx.Exec(ctx,
+		`UPDATE password_reset_tokens SET used_at = now() WHERE token_hash = $1`, tokenHash); err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(ctx,
+		`UPDATE users SET password_hash = $1 WHERE id = $2`, newPasswordHash, userID); err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(ctx,
+		`DELETE FROM refresh_tokens WHERE user_id = $1`, userID); err != nil {
+		return "", err
+	}
+	return userID, tx.Commit(ctx)
+}
+
+// CreateTOTPEnrollment starts (or restarts) a pending TOTP enrollment
+// (backlog #15). A confirmed enrollment is never overwritten — disabling
+// first is the only way back, so a session hijacker can't silently rotate
+// the victim's 2FA secret.
+func (r *Repository) CreateTOTPEnrollment(ctx context.Context, userID, secret string) error {
+	tag, err := r.pool.Exec(ctx,
+		`INSERT INTO user_totp (user_id, secret) VALUES ($1, $2)
+		 ON CONFLICT (user_id) DO UPDATE SET secret = EXCLUDED.secret, created_at = now()
+		 WHERE user_totp.confirmed_at IS NULL`,
+		userID, secret)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTOTPAlreadyEnabled
+	}
+	return nil
+}
+
+// GetTOTP returns the user's TOTP secret and whether enrollment has been
+// confirmed (a pending enrollment does not gate login).
+func (r *Repository) GetTOTP(ctx context.Context, userID string) (secret string, confirmed bool, err error) {
+	var confirmedAt *time.Time
+	err = r.pool.QueryRow(ctx,
+		`SELECT secret, confirmed_at FROM user_totp WHERE user_id = $1`, userID,
+	).Scan(&secret, &confirmedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, ErrTOTPNotEnrolled
+	}
+	return secret, confirmedAt != nil, err
+}
+
+// ConfirmTOTP flips a pending enrollment to confirmed.
+func (r *Repository) ConfirmTOTP(ctx context.Context, userID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE user_totp SET confirmed_at = now() WHERE user_id = $1 AND confirmed_at IS NULL`, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTOTPNotEnrolled
+	}
+	return nil
+}
+
+// DeleteTOTP removes the user's enrollment (confirmed or pending).
+func (r *Repository) DeleteTOTP(ctx context.Context, userID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM user_totp WHERE user_id = $1`, userID)
+	return err
+}
+
 // RecordAuditEvent appends a row to auth_audit_log (FR-4).
 func (r *Repository) RecordAuditEvent(ctx context.Context, userID, event string) error {
 	_, err := r.pool.Exec(ctx,

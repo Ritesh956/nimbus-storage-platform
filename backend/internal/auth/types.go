@@ -25,12 +25,29 @@ var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrInvalidRefresh     = errors.New("invalid or expired refresh token")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
+	ErrTOTPAlreadyEnabled = errors.New("two-factor authentication is already enabled")
+	ErrTOTPNotEnrolled    = errors.New("no two-factor enrollment found")
+	ErrInvalidTOTPCode    = errors.New("invalid authentication code")
+	ErrInvalidChallenge   = errors.New("invalid or expired login challenge")
 )
 
+// LoginResult is what a successful password check yields: either a full
+// token pair, or — when the user has confirmed TOTP — a short-lived
+// challenge the client must complete via CompleteTOTPLogin (backlog #15).
+type LoginResult struct {
+	TOTPRequired   bool
+	ChallengeToken string
+	Tokens         TokenPair
+}
+
 // Audit event verbs for auth_audit_log (FR-4: basic audit log of auth
-// events — login, token refresh, logout).
+// events — login, token refresh, logout, and the Tier 4 additions).
 const (
-	AuditEventLogin   = "login"
-	AuditEventRefresh = "refresh"
-	AuditEventLogout  = "logout"
+	AuditEventLogin         = "login"
+	AuditEventRefresh       = "refresh"
+	AuditEventLogout        = "logout"
+	AuditEventPasswordReset = "password_reset"
+	AuditEventTOTPEnabled   = "totp_enabled"
+	AuditEventTOTPDisabled  = "totp_disabled"
 )

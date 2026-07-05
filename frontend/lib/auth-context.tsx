@@ -7,7 +7,10 @@ import { clearTokens, getRefreshToken } from "./tokens";
 interface AuthContextValue {
   // null = not yet determined (first render, before we've checked storage)
   isAuthenticated: boolean | null;
-  login: (email: string, password: string) => Promise<void>;
+  // Resolves with a challenge when the account has TOTP enabled; the login
+  // page then collects a code and calls totpLogin to finish.
+  login: (email: string, password: string) => Promise<{ totpRequired: boolean; challengeToken?: string }>;
+  totpLogin: (challengeToken: string, code: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -31,7 +34,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    await api.auth.login(email, password);
+    const result = await api.auth.login(email, password);
+    if (!result.totpRequired) setIsAuthenticated(true);
+    return result;
+  }, []);
+
+  const totpLogin = useCallback(async (challengeToken: string, code: string) => {
+    await api.auth.totpLogin(challengeToken, code);
     setIsAuthenticated(true);
   }, []);
 
@@ -49,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, login, register, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, login, totpLogin, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

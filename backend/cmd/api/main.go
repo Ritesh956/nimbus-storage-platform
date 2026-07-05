@@ -28,6 +28,7 @@ import (
 	"nimbus/internal/platform/db"
 	"nimbus/internal/platform/httpserver"
 	"nimbus/internal/platform/logging"
+	"nimbus/internal/platform/mail"
 	"nimbus/internal/platform/ratelimit"
 	"nimbus/internal/search"
 	"nimbus/internal/sharing"
@@ -265,8 +266,15 @@ func run() error {
 		return nil
 	})
 
+	var mailer auth.Mailer
+	if cfg.SMTPAddr != "" {
+		mailer = mail.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPFrom)
+	} else {
+		logger.Warn("NIMBUS_SMTP_ADDR not set — password-reset links will be logged, not emailed")
+	}
+
 	authRepo := auth.NewRepository(pg)
-	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL)
 	authHandler := auth.NewHandler(authSvc)
 	requireAuth := auth.Middleware(authSvc)
 
@@ -287,8 +295,15 @@ func run() error {
 
 	mux.HandleFunc("POST /v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /v1/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /v1/auth/login/totp", authHandler.TOTPLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /v1/auth/logout", authHandler.Logout)
+	mux.HandleFunc("POST /v1/auth/password/forgot", authHandler.ForgotPassword)
+	mux.HandleFunc("POST /v1/auth/password/reset", authHandler.ResetPassword)
+	mux.Handle("GET /v1/auth/totp", requireAuth(http.HandlerFunc(authHandler.TOTPStatus)))
+	mux.Handle("POST /v1/auth/totp/setup", requireAuth(http.HandlerFunc(authHandler.TOTPSetup)))
+	mux.Handle("POST /v1/auth/totp/confirm", requireAuth(http.HandlerFunc(authHandler.TOTPConfirm)))
+	mux.Handle("DELETE /v1/auth/totp", requireAuth(http.HandlerFunc(authHandler.TOTPDisable)))
 
 	mux.Handle("POST /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.Create)))
 	mux.Handle("GET /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.ListMine)))

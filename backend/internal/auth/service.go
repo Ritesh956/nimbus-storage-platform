@@ -7,25 +7,38 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// Mailer sends transactional email (password reset). A nil Mailer disables
+// sending; the reset link is logged instead so environments without an SMTP
+// catcher (kind, bare npm-dev loops) still have a usable flow.
+type Mailer interface {
+	Send(to, subject, body string) error
+}
 
 type Service struct {
 	repo       *Repository
 	redis      *redis.Client
 	issuer     *tokenIssuer
 	refreshTTL time.Duration
+	mailer     Mailer
+	webBaseURL string // frontend origin reset links point at
 }
 
-func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration) *Service {
+func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration, mailer Mailer, webBaseURL string) *Service {
 	return &Service{
 		repo:       repo,
 		redis:      redisClient,
 		issuer:     newTokenIssuer(jwtSecret, accessTTL),
 		refreshTTL: refreshTTL,
+		mailer:     mailer,
+		webBaseURL: strings.TrimRight(webBaseURL, "/"),
 	}
 }
 
@@ -37,26 +50,206 @@ func (s *Service) Register(ctx context.Context, email, password string) (User, e
 	return s.repo.CreateUser(ctx, email, hash)
 }
 
-func (s *Service) Login(ctx context.Context, email, password string) (User, TokenPair, error) {
+func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	u, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			return User{}, TokenPair{}, ErrInvalidCredentials
+			return LoginResult{}, ErrInvalidCredentials
 		}
-		return User{}, TokenPair{}, err
+		return LoginResult{}, err
 	}
 	// Same error for "no such user" and "wrong password" — don't leak
 	// which one it was (avoids user enumeration).
 	if !verifyPassword(u.PasswordHash, password) {
-		return User{}, TokenPair{}, ErrInvalidCredentials
+		return LoginResult{}, ErrInvalidCredentials
 	}
+
+	// Confirmed TOTP turns login into a two-step flow: hand back a
+	// short-lived challenge instead of tokens (backlog #15). The password
+	// is not re-checked at step two — possession of the challenge proves
+	// step one happened.
+	if _, confirmed, err := s.repo.GetTOTP(ctx, u.ID); err == nil && confirmed {
+		challenge, challengeHash := newRefreshToken() // same shape: 32 random bytes, only the hash leaves this process
+		if err := s.redis.Set(ctx, totpChallengeKey(challengeHash), u.ID, totpChallengeTTL).Err(); err != nil {
+			return LoginResult{}, err
+		}
+		return LoginResult{TOTPRequired: true, ChallengeToken: challenge}, nil
+	} else if err != nil && !errors.Is(err, ErrTOTPNotEnrolled) {
+		return LoginResult{}, err
+	}
+
 	pair, err := s.issueNewSession(ctx, u.ID)
 	if err != nil {
-		return User{}, TokenPair{}, err
+		return LoginResult{}, err
 	}
 	s.recordAuditEvent(ctx, u.ID, AuditEventLogin)
-	return u, pair, nil
+	return LoginResult{Tokens: pair}, nil
 }
+
+const (
+	resetTokenTTL    = time.Hour
+	totpChallengeTTL = 5 * time.Minute
+)
+
+// ForgotPassword issues a reset token and emails the reset link. A unknown
+// email is deliberately indistinguishable from a known one to the caller
+// (no user enumeration) — the work just silently doesn't happen.
+func (s *Service) ForgotPassword(ctx context.Context, email string) error {
+	u, err := s.repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil
+		}
+		return err
+	}
+	raw, tokenHash := newRefreshToken() // same shape as refresh tokens: 32 random bytes, SHA-256 stored
+	if err := s.repo.CreatePasswordResetToken(ctx, u.ID, tokenHash, time.Now().Add(resetTokenTTL)); err != nil {
+		return err
+	}
+	resetURL := s.webBaseURL + "/reset-password?token=" + raw
+	if s.mailer == nil {
+		slog.Default().Info("password reset requested but no SMTP is configured — link logged instead",
+			"email", u.Email, "reset_url", resetURL)
+		return nil
+	}
+	body := fmt.Sprintf(
+		"Someone (hopefully you) asked to reset the Nimbus password for %s.\r\n\r\n"+
+			"Reset it here within the next hour:\r\n\r\n%s\r\n\r\n"+
+			"If this wasn't you, ignore this email — the link expires and your password stays unchanged.\r\n",
+		u.Email, resetURL)
+	return s.mailer.Send(u.Email, "Reset your Nimbus password", body)
+}
+
+// ResetPassword consumes a reset token, sets the new password, and revokes
+// every existing session (see Repository.ResetPassword).
+func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) error {
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	userID, err := s.repo.ResetPassword(ctx, hashToken(token), hash)
+	if err != nil {
+		return err
+	}
+	s.recordAuditEvent(ctx, userID, AuditEventPasswordReset)
+	return nil
+}
+
+// SetupTOTP starts (or restarts) enrollment: a fresh secret is stored
+// unconfirmed and returned for the client to render as a QR code. Login is
+// unaffected until ConfirmTOTP proves the authenticator app has it.
+func (s *Service) SetupTOTP(ctx context.Context, userID string) (secret, uri string, err error) {
+	u, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+	secret = newTOTPSecret()
+	if err := s.repo.CreateTOTPEnrollment(ctx, userID, secret); err != nil {
+		return "", "", err
+	}
+	return secret, otpauthURI(u.Email, secret), nil
+}
+
+// ConfirmTOTP verifies a code against the pending enrollment and flips 2FA
+// on.
+func (s *Service) ConfirmTOTP(ctx context.Context, userID, code string) error {
+	secret, confirmed, err := s.repo.GetTOTP(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if confirmed {
+		return ErrTOTPAlreadyEnabled
+	}
+	if err := s.verifyTOTPOnce(ctx, userID, secret, code); err != nil {
+		return err
+	}
+	if err := s.repo.ConfirmTOTP(ctx, userID); err != nil {
+		return err
+	}
+	s.recordAuditEvent(ctx, userID, AuditEventTOTPEnabled)
+	return nil
+}
+
+// DisableTOTP removes the enrollment; a valid current code is required so a
+// hijacked session alone can't switch 2FA off.
+func (s *Service) DisableTOTP(ctx context.Context, userID, code string) error {
+	secret, confirmed, err := s.repo.GetTOTP(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if confirmed {
+		if err := s.verifyTOTPOnce(ctx, userID, secret, code); err != nil {
+			return err
+		}
+	}
+	if err := s.repo.DeleteTOTP(ctx, userID); err != nil {
+		return err
+	}
+	if confirmed {
+		s.recordAuditEvent(ctx, userID, AuditEventTOTPDisabled)
+	}
+	return nil
+}
+
+// TOTPEnabled reports whether the user has a confirmed enrollment.
+func (s *Service) TOTPEnabled(ctx context.Context, userID string) (bool, error) {
+	_, confirmed, err := s.repo.GetTOTP(ctx, userID)
+	if errors.Is(err, ErrTOTPNotEnrolled) {
+		return false, nil
+	}
+	return confirmed, err
+}
+
+// CompleteTOTPLogin finishes the two-step login: challenge + valid code →
+// token pair. A wrong code leaves the challenge alive (the user can retype
+// within the 5-minute TTL); success consumes it.
+func (s *Service) CompleteTOTPLogin(ctx context.Context, challengeToken, code string) (TokenPair, error) {
+	key := totpChallengeKey(hashToken(challengeToken))
+	userID, err := s.redis.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return TokenPair{}, ErrInvalidChallenge
+	}
+	if err != nil {
+		return TokenPair{}, err
+	}
+	secret, confirmed, err := s.repo.GetTOTP(ctx, userID)
+	if err != nil || !confirmed {
+		// Enrollment vanished mid-challenge (disabled concurrently) — the
+		// challenge can't be satisfied anymore.
+		return TokenPair{}, ErrInvalidChallenge
+	}
+	if err := s.verifyTOTPOnce(ctx, userID, secret, code); err != nil {
+		return TokenPair{}, err
+	}
+	s.redis.Del(ctx, key)
+	pair, err := s.issueNewSession(ctx, userID)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	s.recordAuditEvent(ctx, userID, AuditEventLogin)
+	return pair, nil
+}
+
+// verifyTOTPOnce checks the code and burns its time step in Redis so the
+// same code can't be replayed within its validity window (RFC 6238 §5.2) —
+// one successful use per step, across login/confirm/disable alike.
+func (s *Service) verifyTOTPOnce(ctx context.Context, userID, secret, code string) error {
+	step, ok := verifyTOTP(secret, code, time.Now())
+	if !ok {
+		return ErrInvalidTOTPCode
+	}
+	fresh, err := s.redis.SetNX(ctx, fmt.Sprintf("nimbus:totp:used:%s:%d", userID, step),
+		"1", totpPeriod*(totpSkew+2)).Result()
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		return ErrInvalidTOTPCode
+	}
+	return nil
+}
+
+func totpChallengeKey(challengeHash string) string { return "nimbus:totp:challenge:" + challengeHash }
 
 // recordAuditEvent is a best-effort side effect (FR-4): a logging hiccup
 // must never fail an otherwise-successful auth operation, matching the

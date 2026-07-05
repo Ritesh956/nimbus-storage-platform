@@ -87,13 +87,36 @@ export const api = {
   auth: {
     register: (email: string, password: string) =>
       request<{ user_id: string; email: string }>("/v1/auth/register", { method: "POST", body: json({ email, password }) }),
-    login: async (email: string, password: string) => {
-      const body = await request<{ access_token: string; refresh_token: string }>("/v1/auth/login", {
+    // Login is two-step when the account has TOTP enabled: the first call
+    // returns a challenge instead of tokens, and totpLogin finishes it.
+    login: async (email: string, password: string): Promise<{ totpRequired: boolean; challengeToken?: string }> => {
+      const body = await request<{
+        access_token?: string;
+        refresh_token?: string;
+        totp_required?: boolean;
+        challenge_token?: string;
+      }>("/v1/auth/login", { method: "POST", body: json({ email, password }) });
+      if (body.totp_required) {
+        return { totpRequired: true, challengeToken: body.challenge_token };
+      }
+      setTokens(body.access_token!, body.refresh_token!);
+      return { totpRequired: false };
+    },
+    totpLogin: async (challengeToken: string, code: string) => {
+      const body = await request<{ access_token: string; refresh_token: string }>("/v1/auth/login/totp", {
         method: "POST",
-        body: json({ email, password }),
+        body: json({ challenge_token: challengeToken, code }),
       });
       setTokens(body.access_token, body.refresh_token);
     },
+    forgotPassword: (email: string) =>
+      request<void>("/v1/auth/password/forgot", { method: "POST", body: json({ email }) }),
+    resetPassword: (token: string, password: string) =>
+      request<void>("/v1/auth/password/reset", { method: "POST", body: json({ token, password }) }),
+    totpStatus: () => request<{ enabled: boolean }>("/v1/auth/totp"),
+    totpSetup: () => request<{ secret: string; otpauth_uri: string }>("/v1/auth/totp/setup", { method: "POST" }),
+    totpConfirm: (code: string) => request<void>("/v1/auth/totp/confirm", { method: "POST", body: json({ code }) }),
+    totpDisable: (code: string) => request<void>("/v1/auth/totp", { method: "DELETE", body: json({ code }) }),
     logout: async () => {
       const refreshToken = getRefreshToken();
       try {

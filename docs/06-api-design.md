@@ -1,7 +1,7 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of the post-Tier-3 UX/sharing session (2026-07-05)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5); the post-Tier-3 session added folder/bundle share scopes and the public share children/download-plan routes (§7).
-Version: 0.5
+Status: **current as of the Tier 4 session (2026-07-06)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5); the post-Tier-3 session added folder/bundle share scopes and the public share children/download-plan routes (§7); the Tier 4 session added password reset and TOTP 2FA (§2).
+Version: 0.6
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
 REST/JSON, versioned under `/v1`. Auth via `Authorization: Bearer <access_token>` except where marked public. CORS is enabled (`httpserver.CORS`, added Day 10 for the browser frontend) — permissive by default (`NIMBUS_CORS_ORIGIN=*`), safe here because auth is a Bearer token, not cookies.
@@ -33,11 +33,20 @@ Cursor pagination (`?cursor=&limit=`, response includes `next_cursor`) is implem
 | Method | Path | Body | 2xx | Notes |
 |---|---|---|---|---|
 | POST | `/v1/auth/register` | `{email, password}` | 201 `{user_id, email}` | public |
-| POST | `/v1/auth/login` | `{email, password}` | 200 `{access_token, refresh_token, expires_in}` | public |
+| POST | `/v1/auth/login` | `{email, password}` | 200 `{access_token, refresh_token, expires_in}` **or** 200 `{totp_required: true, challenge_token}` | public; the second shape is returned when the account has confirmed TOTP (Tier 4) — finish via `/v1/auth/login/totp` within 5 minutes |
+| POST | `/v1/auth/login/totp` | `{challenge_token, code}` | 200 `{access_token, refresh_token, expires_in}` | public; step two of a TOTP-gated login. A wrong code leaves the challenge alive (retype within the TTL); success consumes it. 401 on bad/expired challenge or code |
 | POST | `/v1/auth/refresh` | `{refresh_token}` | 200 `{access_token, refresh_token, expires_in}` | public; rotates token, reuse-of-old-token revokes the whole family (LLD §3) |
 | POST | `/v1/auth/logout` | `{refresh_token}` | 204 | blacklists access token jti in Redis + revokes refresh family |
+| POST | `/v1/auth/password/forgot` | `{email}` | 202 | public; always 202 whether or not the email is registered (no enumeration oracle). Emails a single-use reset link (1h TTL, SHA-256 of the token stored) via SMTP (`NIMBUS_SMTP_ADDR` — Mailpit in compose); with no SMTP configured the link is logged instead of sent |
+| POST | `/v1/auth/password/reset` | `{token, password}` | 204 | public; one transaction: consumes the token, rewrites the password hash, revokes **all** the user's refresh-token families. 400 on used/expired/unknown token |
+| GET | `/v1/auth/totp` | — | 200 `{enabled}` | whether the caller has confirmed TOTP |
+| POST | `/v1/auth/totp/setup` | — | 200 `{secret, otpauth_uri}` | starts (or restarts) a pending enrollment — login is not gated until confirmed; a confirmed enrollment is never overwritten. 409 if already enabled |
+| POST | `/v1/auth/totp/confirm` | `{code}` | 204 | verifies a current code and flips 2FA on. 400 bad code, 409 no pending enrollment |
+| DELETE | `/v1/auth/totp` | `{code}` | 204 | requires a current code so a hijacked session alone can't switch 2FA off. 400 bad code, 404 not enabled |
 
-Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4, Day 15) — best-effort, not part of any response body, no API surface of its own (queried directly in Postgres, not exposed via a route). `register` does not.
+TOTP (Tier 4, backlog #15) is RFC 6238 — HMAC-SHA1, 6 digits, 30s steps, ±1 step of clock skew — implemented on the Go stdlib (`internal/auth/totp.go`, locked to the RFC's Appendix B vectors by unit tests), with a Redis-backed one-use-per-time-step replay guard shared by login/confirm/disable.
+
+Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4, Day 15) — best-effort, not part of any response body, no API surface of its own (queried directly in Postgres, not exposed via a route). Tier 4 added `password_reset`, `totp_enabled`, and `totp_disabled` verbs; a TOTP-gated login records its `login` row when the second step succeeds. `register` does not write one.
 
 ## 3. Orgs & membership — `internal/org`
 

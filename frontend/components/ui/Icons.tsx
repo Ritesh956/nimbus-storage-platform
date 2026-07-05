@@ -129,6 +129,13 @@ export const UsersIcon = (p: IconProps) => (
   </svg>
 );
 
+export const ShieldIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6l-7-3Z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
+
 export const ClockIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <circle cx="12" cy="12" r="9" />

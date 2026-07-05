@@ -98,7 +98,7 @@ Or, to iterate on the frontend outside its container: skip `nimbus-web` and run 
 curl http://localhost:8080/healthz   # {"status":"ok"}
 curl http://localhost:8080/readyz    # checks postgres/redis/nats connectivity
 ```
-Frontend: http://localhost:3000 · Grafana: http://localhost:3001 (admin/nimbus) · Prometheus: http://localhost:9090
+Frontend: http://localhost:3000 · Grafana: http://localhost:3001 (admin/nimbus) · Prometheus: http://localhost:9090 · Mailpit (catches password-reset email): http://localhost:8025
 
 `make down` tears the backend stack down (including volumes).
 

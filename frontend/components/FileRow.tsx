@@ -123,6 +123,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
   const [newName, setNewName] = useState(name);
   const [shareExpiry, setShareExpiry] = useState<keyof typeof expiryOptions>("never");
   const [shareExpiresAt, setShareExpiresAt] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
   async function loadVersions() {
     try {
@@ -190,7 +191,16 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
       // "Share" and looking at the result, not just reading the code.
       // The frontend knows its own origin, so it builds the link to its
       // own polished /shares/{token} page instead, using just the token.
-      setShare({ ...link, url: `${window.location.origin}/shares/${link.token}` });
+      const url = `${window.location.origin}/shares/${link.token}`;
+      setShare({ ...link, url });
+      // Auto-copy so sharing is one click; the Copy button stays as the
+      // fallback for when the clipboard write is refused (unfocused tab).
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareCopied(true);
+      } catch {
+        setShareCopied(false);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "failed to create share link");
     } finally {
@@ -325,9 +335,16 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
               <span className="shrink-0 text-[11px] text-muted-2">
                 {shareExpiresAt ? `expires ${formatDate(shareExpiresAt)}` : "never expires"}
               </span>
-              <Button variant="ghost" className="shrink-0" onClick={() => navigator.clipboard.writeText(share.url)}>
+              <Button
+                variant="ghost"
+                className="shrink-0"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(share.url);
+                  setShareCopied(true);
+                }}
+              >
                 <CopyIcon size={13} />
-                Copy
+                {shareCopied ? "Copied" : "Copy"}
               </Button>
               <Button
                 variant="ghost"
@@ -335,6 +352,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
                 onClick={async () => {
                   await api.shares.revoke(share.token);
                   setShare(null);
+                  setShareCopied(false);
                 }}
               >
                 Revoke

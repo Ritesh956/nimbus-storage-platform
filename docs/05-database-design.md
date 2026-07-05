@@ -1,7 +1,7 @@
 # Database Design — Nimbus Storage Platform
 
-Status: current as of the post-Tier-3 UX/sharing session, 2026-07-05 (§2 covers migrations 000001-000009; see docs/00-project-state.md for the live summary)
-Version: 0.4
+Status: current as of the Tier 4 session, 2026-07-06 (§2 covers migrations 000001-000011; see docs/00-project-state.md for the live summary)
+Version: 0.5
 Depends on: [02-system-design.md](02-system-design.md) §4, [04-lld.md](04-lld.md) §3
 
 Single Postgres database (per §3 of System Design: strong consistency for the hierarchical/transactional parts). All tables use `uuid` PKs (via `gen_random_uuid()`, `pgcrypto`) except append-only/high-volume tables (`activity_events`) which use `bigserial`, and content-addressed tables (`chunks`, `chunk_locations`) which are keyed by hash/node directly.
@@ -238,6 +238,10 @@ Migration 000008 fixes a real bug the GC smoke suite caught: `uploads.file_id`, 
 ### 2.6 Migration 000009 — share scopes (post-Tier-3 session, 2026-07-05)
 
 `share_links.file_id` went nullable, joined by nullable `folder_id` (CHECK: at most one set) and a new `share_link_files` join table — a link's scope is exactly one of file / folder / bundle (≥1 join rows; the cross-table exclusivity half is enforced in `sharing.Service`, since CHECK can't span tables). `org_id` was added and backfilled from the shared file so revoke authorization is a single membership check against the link itself. See docs/06-api-design.md §7.
+
+### 2.7 Migrations 000010/000011 — password reset + TOTP (Tier 4 session, 2026-07-06)
+
+Two self-contained auth-owned tables, both `ON DELETE CASCADE` off `users`. `password_reset_tokens` (000010) stores only the SHA-256 of the emailed token — same rationale as `refresh_tokens.token_hash` — with `expires_at` (1h TTL set by `auth.Service`) and single-use `used_at`. `user_totp` (000011) is one row per enrolled user: `secret` (base32, plaintext — the server must derive codes from it every verification; same at-rest posture as the JWT secret) and `confirmed_at`, where NULL means a pending enrollment that does not yet gate login. See docs/06-api-design.md §2.
 
 ## 3. Design notes
 
