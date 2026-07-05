@@ -109,6 +109,28 @@ async function zipFolderInto(token: string, folderId: string, zip: JSZip, onFile
   }
 }
 
+// zipFilesInto is the bundle-share equivalent of zipFolderInto — no
+// recursion needed, a bundle is already a flat hand-picked file list, but
+// same just-in-time per-file plan fetch. Unlike a folder tree (where
+// subfolders naturally namespace names), a bundle can freely mix files
+// from different source folders, so two entries can share a name —
+// disambiguated with a "(n)" suffix rather than silently overwriting.
+async function zipFilesInto(token: string, files: ShareFileInfo[], zip: JSZip, onFile: () => void) {
+  const seen = new Map<string, number>();
+  for (const f of files) {
+    const { download_plan } = await api.shares.downloadPlan(token, f.id);
+    let name = f.name;
+    const count = seen.get(f.name) ?? 0;
+    if (count > 0) {
+      const dot = f.name.lastIndexOf(".");
+      name = dot > 0 ? `${f.name.slice(0, dot)} (${count})${f.name.slice(dot)}` : `${f.name} (${count})`;
+    }
+    seen.set(f.name, count + 1);
+    zip.file(name, await assembleFromPlan(download_plan));
+    onFile();
+  }
+}
+
 function SingleFile({ file, plan, onError }: { file: ShareFileInfo; plan: DownloadPlan; onError: (m: string) => void }) {
   const [downloading, setDownloading] = useState(false);
 
@@ -182,14 +204,42 @@ function SharedFileRow({ token, file }: { token: string; file: ShareFileInfo }) 
 }
 
 function Bundle({ token, files }: { token: string; files: ShareFileInfo[] }) {
+  // Zip-download progress: null = idle, number = files packed so far.
+  const [zipped, setZipped] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function downloadAll() {
+    setZipped(0);
+    setError(null);
+    try {
+      const zip = new JSZip();
+      let n = 0;
+      await zipFilesInto(token, files, zip, () => setZipped(++n));
+      saveBlob(await zip.generateAsync({ type: "blob" }), "shared-files.zip");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "download failed");
+    } finally {
+      setZipped(null);
+    }
+  }
+
   return (
     <Card className="overflow-hidden p-0">
-      <div className="border-b border-border/60 px-5 py-4">
-        <h1 className="text-sm font-medium">
-          {files.length} shared file{files.length === 1 ? "" : "s"}
-        </h1>
-        <p className="mt-0.5 text-xs text-muted-2">One link, the whole set — download what you need.</p>
+      <div className="flex items-center gap-3 border-b border-border/60 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-sm font-medium">
+            {files.length} shared file{files.length === 1 ? "" : "s"}
+          </h1>
+          <p className="mt-0.5 text-xs text-muted-2">One link, the whole set — download what you need.</p>
+        </div>
+        {files.length > 0 && (
+          <Button variant="secondary" className="shrink-0" disabled={zipped !== null} onClick={downloadAll}>
+            <DownloadIcon size={13} />
+            {zipped !== null ? `Zipping… (${zipped}/${files.length})` : "Download all"}
+          </Button>
+        )}
       </div>
+      {error && <p className="px-5 py-3 text-xs text-danger">{error}</p>}
       <ul>
         {files.length === 0 && <li className="px-5 py-6 text-center text-xs text-muted-2">Nothing shareable remains in this bundle.</li>}
         {files.map((f) => (

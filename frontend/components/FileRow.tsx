@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { Button } from "./ui/Button";
+import { Checkbox } from "./ui/Checkbox";
 import { MoveDialog } from "./MoveDialog";
 import {
   FolderIcon,
@@ -241,13 +242,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
       <div className="flex items-center">
         {onToggleSelect && (
           <label className="shrink-0 cursor-pointer py-3 pl-4 sm:pl-5" title="Select for sharing">
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={onToggleSelect}
-              className="glow-ring size-3.5 cursor-pointer rounded"
-              style={{ accentColor: "var(--accent)" }}
-            />
+            <Checkbox checked={selected} onChange={onToggleSelect} />
           </label>
         )}
         <button

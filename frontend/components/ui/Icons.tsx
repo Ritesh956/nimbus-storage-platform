@@ -129,6 +129,12 @@ export const UsersIcon = (p: IconProps) => (
   </svg>
 );
 
+export const CheckIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m5 12.5 4.5 4.5L19 7" />
+  </svg>
+);
+
 export const ShieldIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6l-7-3Z" />
