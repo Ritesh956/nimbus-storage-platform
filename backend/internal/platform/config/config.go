@@ -42,11 +42,14 @@ type Config struct {
 	SMTPFrom   string
 	WebBaseURL string
 
-	// PlatformAdminEmails bootstraps users.is_platform_admin at api boot
-	// (promote-only — see auth.Repository.PromotePlatformAdmins). Gates
-	// the /v1/admin/* cluster-ops routes. Empty means nobody is promoted;
-	// existing flags in the DB still apply.
-	PlatformAdminEmails []string
+	// AdminEmail/AdminPassword seed the single platform-admin account at
+	// api boot (see auth.Repository.EnsureSeededAdmin). This is the only
+	// way to gain is_platform_admin=true — there is deliberately no
+	// email-list mechanism that could let an arbitrary signup become an
+	// admin. Both are required; existing accounts are never demoted by
+	// omitting them (see EnsureSeededAdmin's ON CONFLICT semantics).
+	AdminEmail    string
+	AdminPassword string
 
 	ChunkSizeBytes    int64
 	ReplicationFactor int // N
@@ -91,6 +94,8 @@ func Load() (Config, error) {
 		WebBaseURL:         getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
 		MinIOAccessKey:     os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
 		MinIOSecretKey:     os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
+		AdminEmail:         strings.ToLower(strings.TrimSpace(os.Getenv("NIMBUS_ADMIN_EMAIL"))),
+		AdminPassword:      os.Getenv("NIMBUS_ADMIN_PASSWORD"),
 		TrashRetentionDays: 30,
 		ChunkSizeBytes:     8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
 		ReplicationFactor:  2,
@@ -175,12 +180,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	for _, e := range strings.Split(os.Getenv("NIMBUS_PLATFORM_ADMIN_EMAILS"), ",") {
-		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
-			cfg.PlatformAdminEmails = append(cfg.PlatformAdminEmails, e)
-		}
-	}
-
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -232,6 +231,14 @@ func (c Config) validate() error {
 		if c.MinIOSecretKey == "" {
 			missing = append(missing, "NIMBUS_MINIO_SECRET_KEY")
 		}
+	}
+	if c.AdminEmail == "" {
+		missing = append(missing, "NIMBUS_ADMIN_EMAIL")
+	}
+	if c.AdminPassword == "" {
+		missing = append(missing, "NIMBUS_ADMIN_PASSWORD")
+	} else if len(c.AdminPassword) < 8 {
+		return fmt.Errorf("NIMBUS_ADMIN_PASSWORD: must be at least 8 characters")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))

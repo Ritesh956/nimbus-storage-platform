@@ -1,6 +1,6 @@
 # Handoff — Next Session
 
-Updated at the end of governance session part 2 (2026-07-06, same day as Tier 4 and governance part 1). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
+Updated at the end of the pre-deployment audit session (2026-07-06, same day as Tier 4, governance parts 1–2, and the default-org-on-signup fix). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
 
 ## The 15-item feature backlog is COMPLETE, plus two governance sessions on top
 
@@ -10,18 +10,26 @@ Updated at the end of governance session part 2 (2026-07-06, same day as Tier 4 
 
 The one standing open thread. Full agreed recipe is in docs/00-project-state.md "Known issues" first bullet — don't re-derive it (VPS + Compose + Caddy/Let's Encrypt TLS in front of api **and** each MinIO node, DuckDNS subdomain, fresh secrets, narrowed CORS, `NEXT_PUBLIC_API_URL` set in Vercel and redeploy). **Prereq from the user: a VPS IP + SSH key — ask, don't assume.** All backend blockers (rate limiting, caps/quotas, DLQ visibility — Tier 2) are done.
 
-If the user wants more feature work instead, candidates that have come up but were never scoped/approved: Grafana alerting on new dead events, Helm-chart CI (`helm lint`/template/kind smoke), mailpit-on-kind, a change-role endpoint (today role changes are remove + re-add). Treat these as suggestions to offer, not a backlog to burn down. Note the Helm chart's ConfigMap doesn't set `NIMBUS_PLATFORM_ADMIN_EMAILS`, so on kind nobody is a platform admin until it's added or set manually — same Compose-only posture as mailpit.
+If the user wants more feature work instead, candidates that have come up but were never scoped/approved: Grafana alerting on new dead events, Helm-chart CI (`helm lint`/template/kind smoke), mailpit-on-kind, a change-role endpoint (today role changes are remove + re-add). Treat these as suggestions to offer, not a backlog to burn down.
 
 ## What the two governance sessions built (2026-07-06, after Tier 4)
 
 See docs/00-project-state.md items 22–23. Notes worth carrying:
 
-- **Two kinds of "admin," deliberately separate**: `/v1/admin/*` is cluster ops (nodes/ring/DLQ), gated by `users.is_platform_admin` (migration 000012, bootstrapped from `NIMBUS_PLATFORM_ADMIN_EMAILS` — compose promotes `tier1-demo@nimbus.dev`, `test@gmail.com`, `test1@gmail.com`). `GET /v1/orgs/{orgId}/usage` and member management are org governance, gated by org role (admin tier and up). Don't collapse them — the nav item is named "Cluster" specifically to keep them apart.
+- **Two kinds of "admin," deliberately separate**: `/v1/admin/*` is cluster ops (nodes/ring/DLQ), gated by `users.is_platform_admin` (migration 000012). `GET /v1/orgs/{orgId}/usage` and member management are org governance, gated by org role (admin tier and up). Don't collapse them — the nav item is named "Cluster" specifically to keep them apart.
 - **Org roles are a three-tier ladder** (migration 000013): owner > admin > member, rank-compared in `org.RequireRole`. Admin bounds live in `org.Service`, not the UI: admins can only *grant* `member` (`ErrElevatedRoleNeedsOwner` otherwise) and only *remove* plain members (`ErrAdminRemovesMembersOnly` otherwise) — a delegated admin can never consolidate control. The creator stays unremovable by anyone. No change-role endpoint exists yet (today: remove + re-add).
-- **Promotion is promote-only** (`auth.Repository.PromotePlatformAdmins`): dropping an email from the env never revokes; revoke = manual `UPDATE users SET is_platform_admin = false`. A user registering *after* boot with a listed email isn't promoted until the next api restart.
+- **Platform-admin promotion mechanism was replaced in the pre-deployment audit session (item 25)** — see below; `auth.Repository.PromotePlatformAdmins`/`NIMBUS_PLATFORM_ADMIN_EMAILS` no longer exist.
 - **`GET /v1/auth/me` exists now** — the frontend uses it to hide the Cluster nav for non-admins and to make the Members page role-aware (invite form and remove buttons only shown to roles that could actually use them). Server-side checks are the real enforcement; `/me` is presentation only.
 - **Usage privacy line** (documented in `org/usage.go`): aggregate action metadata only, all already member-visible via the activity feed; no file names/content, and explicitly not `auth_audit_log` (spans orgs, user-private).
-- **Full demo role ladder now exists** in Tier1 Demo Org: `tier1-demo@nimbus.dev` / `tier1-demo-password` (owner + platform admin), `org-admin-demo@nimbus.dev` / `org-admin-demo-pass` (org admin), `governance-demo@nimbus.dev` / `governance-demo-pass` (plain member). Log into each to see the Members/Cluster pages reshape by role.
+- **Demo role ladder in Tier1 Demo Org** (platform-admin flag no longer applies to any of these — see below): `tier1-demo@nimbus.dev` / `tier1-demo-password` (org owner only), `org-admin-demo@nimbus.dev` / `org-admin-demo-pass` (org admin), `governance-demo@nimbus.dev` / `governance-demo-pass` (plain member). Log into each to see the Members/Cluster pages reshape by role.
+
+## What the pre-deployment audit session built (2026-07-06, same day, before going public)
+
+See docs/00-project-state.md item 25 for the full list. Notes worth carrying:
+
+- **Platform-admin access is now a single seeded login, not an email list.** `NIMBUS_ADMIN_EMAIL`/`NIMBUS_ADMIN_PASSWORD` (required config, in `deploy/.env` for Compose and `values.yaml`/`secret.yaml` for Helm) are the only way to get `is_platform_admin=true` — `auth.Repository.EnsureSeededAdmin` creates that one account at boot if missing, or just ensures the flag if it already exists (still promote-only/idempotent, never touches the password on an existing account). The old `tier1-demo@nimbus.dev`/`test@gmail.com`/`test1@gmail.com` promotions were manually revoked in the dev DB as part of this change — those accounts are org-only now, not platform admins.
+- **Two real security bugs fixed**: `ratelimit.ClientIP` now trusts the *last* `X-Forwarded-For` hop (not the first, which is attacker-controlled) — matters once Caddy is the reverse proxy in the go-public plan. Root `.dockerignore` now excludes `.env*` (carve-out for `.env.example`) — it previously let `Dockerfile.web`'s build stage copy `frontend/.env.local` (which had a live Vercel OIDC token) into a Docker layer.
+- **Known deliberate non-fixes**: global chunk dedup (`upload.Service`) has no proof-of-possession check — a user who learns another org's chunk hash can reference it via dedup — flagged as a design tradeoff to decide on, not fixed. The infra-exposure findings (Postgres/Redis/MinIO/Grafana/Prometheus all on `0.0.0.0` with weak shared dev credentials, no `restart:`/resource limits anywhere in `docker-compose.yml`) are folded into the still-open go-public VPS work below, not fixed yet.
 
 ## What the Tier 4 session built (2026-07-06, before the governance sessions)
 
@@ -39,7 +47,7 @@ See docs/00-project-state.md item 21 for the full list. Notes worth carrying:
 ## Important context (carried forward, still true)
 
 - **Verification pattern to keep using**: build, then check against the real thing — real API smokes (23 assertions for Tier 4, 21 for governance part 1, 15 for the role tier) plus full browser flows per role/perspective are the expected depth.
-- **Known real gaps**: HPA stub inert, Helm chart not in CI (and doesn't set `NIMBUS_PLATFORM_ADMIN_EMAILS`), mailpit Compose-only, chaos/load/smoke scripts Compose-only. Full list in docs/00-project-state.md.
+- **Known real gaps**: HPA stub inert, Helm chart not in CI, mailpit Compose-only, chaos/load/smoke scripts Compose-only. Also, per the pre-deployment audit: infra services (Postgres/Redis/MinIO/Grafana/Prometheus) still bind `0.0.0.0` with weak shared dev credentials and no restart/resource policies in `docker-compose.yml` — needs addressing as part of the VPS work, not before. Full list in docs/00-project-state.md.
 - **Environment state at session end**: full Compose stack up (`nimbus-web`, `mailpit` included) with images rebuilt from this session's code; migrations through 000013 applied. Demo users: see the role ladder above, plus `tier4-browser@nimbus.dev` / `tier4-browser-newpw` (**TOTP enabled** — logging in needs its authenticator secret, which only lives in that browser session's enrollment; if it's in the way, clear `user_totp` for that user in Postgres). The Day 13 `kind` cluster node container remains stopped, not deleted.
 - A git remote is configured (`origin` → `github.com/Ritesh956/nimbus-storage-platform`, private). Commit and push at the end of each session, confirming with the user before each push. Branch protection is live on `main` (4 CI jobs required for PR merges; direct pushes still work).
 

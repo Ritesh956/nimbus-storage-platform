@@ -61,22 +61,24 @@ func (r *Repository) GetUserByID(ctx context.Context, id string) (User, error) {
 	return u, err
 }
 
-// PromotePlatformAdmins flips is_platform_admin on for every listed email
-// that has a registered account, and returns how many rows actually
-// changed. Deliberately promote-only: dropping an email from
-// NIMBUS_PLATFORM_ADMIN_EMAILS must not silently revoke access on the next
-// restart — revocation is an explicit manual UPDATE.
-func (r *Repository) PromotePlatformAdmins(ctx context.Context, emails []string) (int64, error) {
-	if len(emails) == 0 {
-		return 0, nil
-	}
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE users SET is_platform_admin = true
-		 WHERE email = ANY($1) AND NOT is_platform_admin`, emails)
+// EnsureSeededAdmin is the *only* path to is_platform_admin=true: it
+// creates the single account named by NIMBUS_ADMIN_EMAIL if it doesn't
+// exist yet (with the given plaintext password, hashed here), or leaves
+// an existing account's password untouched and just makes sure the flag
+// is set. There is deliberately no email-list/self-service mechanism —
+// an arbitrary signup can never become an admin by matching a config
+// value, only this one seeded account can.
+func (r *Repository) EnsureSeededAdmin(ctx context.Context, email, plainPassword string) error {
+	hash, err := hashPassword(plainPassword)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	return tag.RowsAffected(), nil
+	_, err = r.pool.Exec(ctx,
+		`INSERT INTO users (email, password_hash, is_platform_admin)
+		 VALUES ($1, $2, true)
+		 ON CONFLICT (email) DO UPDATE SET is_platform_admin = true`,
+		email, hash)
+	return err
 }
 
 // CreateRefreshFamily starts a brand-new rotation family (fresh login), per

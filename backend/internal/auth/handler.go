@@ -29,12 +29,17 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.OrgName = strings.TrimSpace(req.OrgName)
 	if !strings.Contains(req.Email, "@") || len(req.Password) < 8 {
 		httpserver.WriteError(w, r, httpserver.ErrInvalid, "email must be valid and password must be at least 8 characters")
 		return
 	}
+	if len(req.OrgName) > 200 {
+		httpserver.WriteError(w, r, httpserver.ErrInvalid, "org_name must be at most 200 characters")
+		return
+	}
 
-	u, err := h.svc.Register(r.Context(), req.Email, req.Password, strings.TrimSpace(req.OrgName))
+	u, err := h.svc.Register(r.Context(), req.Email, req.Password, req.OrgName)
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
 			httpserver.WriteError(w, r, httpserver.ErrConflict, "email already registered")

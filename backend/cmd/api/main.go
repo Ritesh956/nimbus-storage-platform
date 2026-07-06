@@ -313,11 +313,10 @@ func run() error {
 
 	authRepo := auth.NewRepository(pg)
 
-	if n, err := authRepo.PromotePlatformAdmins(ctx, cfg.PlatformAdminEmails); err != nil {
-		return fmt.Errorf("promote platform admins: %w", err)
-	} else if n > 0 {
-		logger.Info("promoted platform admins", "count", n)
+	if err := authRepo.EnsureSeededAdmin(ctx, cfg.AdminEmail, cfg.AdminPassword); err != nil {
+		return fmt.Errorf("seed platform admin: %w", err)
 	}
+	logger.Info("seeded platform admin", "email", cfg.AdminEmail)
 
 	// These repos/services are built ahead of auth.NewService (below)
 	// because org.NewService needs them: folderRepo as a FolderCreator,

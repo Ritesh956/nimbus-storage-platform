@@ -99,15 +99,18 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 	}
 }
 
-// ClientIP is the fallback bucket key for unauthenticated callers: first
-// X-Forwarded-For hop when a reverse proxy is in front (the go-public plan
-// puts Caddy there), else the connection's remote host.
+// ClientIP is the fallback bucket key for unauthenticated callers: the
+// *last* X-Forwarded-For hop when a reverse proxy is in front (the
+// go-public plan puts a single Caddy hop there), else the connection's
+// remote host. Last, not first: a single trusted proxy appends the real
+// peer address as the final hop, while every earlier hop is whatever the
+// client itself chose to send — trusting the first hop would let any
+// caller pick a fresh fake IP on every request and get a brand-new rate
+// limit bucket each time, defeating per-IP throttling entirely.
 func ClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first, _, ok := strings.Cut(xff, ","); ok {
-			return strings.TrimSpace(first)
-		}
-		return strings.TrimSpace(xff)
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

@@ -4,3 +4,6 @@ frontend/.next
 backend/bin
 **/*.log
 .claude
+**/.env
+**/.env.*
+!**/.env.example

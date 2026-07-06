@@ -245,7 +245,7 @@ Two self-contained auth-owned tables, both `ON DELETE CASCADE` off `users`. `pas
 
 ### 2.8 Migration 000012 — platform-admin flag (governance session, 2026-07-06)
 
-`users.is_platform_admin boolean NOT NULL DEFAULT false` — gates the `/v1/admin/*` cluster-ops routes (docs/06-api-design.md §9). Bootstrapped at api boot from `NIMBUS_PLATFORM_ADMIN_EMAILS` (promote-only; revoking is a deliberate manual UPDATE so a config edit can't silently strip access).
+`users.is_platform_admin boolean NOT NULL DEFAULT false` — gates the `/v1/admin/*` cluster-ops routes (docs/06-api-design.md §9). Set only via the single seeded admin account at api boot (`NIMBUS_ADMIN_EMAIL`/`NIMBUS_ADMIN_PASSWORD`, `auth.Repository.EnsureSeededAdmin`) — promote-only; revoking is a deliberate manual UPDATE so a config edit can't silently strip access.
 
 ### 2.9 Migration 000013 — org-admin role (governance session part 2, 2026-07-06)
 

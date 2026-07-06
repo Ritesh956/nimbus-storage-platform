@@ -134,7 +134,7 @@ A share link is scoped to exactly one of: a **file**, a **folder** (its whole su
 
 ## 9. Admin — `internal/storage`, `internal/events`
 
-All four routes below are **platform-admin gated** since the governance session (`auth.RequirePlatformAdmin`, 403 otherwise — previously any valid JWT sufficed): they're deployment-wide cluster reads (nodes, ring, DLQ across all orgs), not org data, so the check is `users.is_platform_admin` (migration 000012, bootstrapped from `NIMBUS_PLATFORM_ADMIN_EMAILS` at api boot; promote-only, revoke is a manual UPDATE), not an org role.
+All four routes below are **platform-admin gated** since the governance session (`auth.RequirePlatformAdmin`, 403 otherwise — previously any valid JWT sufficed): they're deployment-wide cluster reads (nodes, ring, DLQ across all orgs), not org data, so the check is `users.is_platform_admin` (migration 000012, set only via the single seeded admin account — `NIMBUS_ADMIN_EMAIL`/`NIMBUS_ADMIN_PASSWORD`, `auth.Repository.EnsureSeededAdmin` — promote-only, revoke is a manual UPDATE), not an org role.
 
 | Method | Path | 2xx | Notes |
 |---|---|---|---|

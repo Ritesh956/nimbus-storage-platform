@@ -17,6 +17,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [accountCreated, setAccountCreated] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(e: FormEvent) {
@@ -25,6 +26,11 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await register(email, password, orgName);
+      // Account (and its default org) now exists even if the following
+      // login call fails — a retry of this form would 409 on the
+      // already-taken email, so point the user at /login instead of
+      // making them think registration itself failed.
+      setAccountCreated(true);
       await login(email, password);
       router.replace("/app");
     } catch (err) {
@@ -72,13 +78,28 @@ export default function RegisterPage() {
               <label className="mb-1.5 block text-xs font-medium text-muted">Organization name</label>
               <Input
                 type="text"
+                maxLength={200}
                 placeholder="Acme Inc"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
               />
               <p className="mt-1.5 text-[11px] text-muted-2">Optional — we&apos;ll name it for you if you skip this.</p>
             </div>
-            {error && <p className="text-xs text-danger">{error}</p>}
+            {error && (
+              <p className="text-xs text-danger">
+                {accountCreated ? (
+                  <>
+                    Account created, but sign-in failed: {error}. Try{" "}
+                    <Link href="/login" className="glow-ring rounded font-medium text-accent hover:underline">
+                      signing in
+                    </Link>{" "}
+                    instead.
+                  </>
+                ) : (
+                  error
+                )}
+              </p>
+            )}
             <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">
               {loading ? "Creating account…" : "Create account"}
             </Button>

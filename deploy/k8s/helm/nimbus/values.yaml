@@ -36,3 +36,7 @@ secrets:
   jwtSecret: "dev-only-secret-change-me-please-32chars-min"
   minioAccessKey: "nimbus"
   minioSecretKey: "nimbus-secret"
+  # The single seeded platform-admin login (the only way to gain
+  # cluster-ops /v1/admin/* access — see auth.Repository.EnsureSeededAdmin).
+  adminEmail: "admin@nimbus.dev"
+  adminPassword: "dev-only-admin-pass-change-me"

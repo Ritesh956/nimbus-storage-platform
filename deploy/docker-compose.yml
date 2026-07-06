@@ -86,9 +86,9 @@ services:
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
       NIMBUS_SMTP_ADDR: mailpit:1025
-      # Cluster-ops access (/v1/admin/*) for the demo accounts — promoted
-      # at boot, see auth.Repository.PromotePlatformAdmins.
-      NIMBUS_PLATFORM_ADMIN_EMAILS: "tier1-demo@nimbus.dev,test@gmail.com,test1@gmail.com"
+      # NIMBUS_ADMIN_EMAIL / NIMBUS_ADMIN_PASSWORD (the sole seeded
+      # platform-admin login, see auth.Repository.EnsureSeededAdmin) come
+      # from .env, not here — they're real credentials, not fixed infra.
     ports: ["8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }
