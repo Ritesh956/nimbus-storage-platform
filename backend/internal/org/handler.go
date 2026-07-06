@@ -101,6 +101,17 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Usage serves GET /v1/orgs/{orgId}/usage — owner-gated (RequireRole
+// RoleOwner in main.go) org oversight; see usage.go for the privacy line.
+func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
+	u, err := h.svc.Usage(r.Context(), r.PathValue("orgId"))
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to compute organization usage")
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, u)
+}
+
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	userID := r.PathValue("userId")

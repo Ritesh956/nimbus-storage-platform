@@ -10,6 +10,27 @@ export interface Member {
   role: "owner" | "member";
 }
 
+// Owner-gated org oversight (GET /v1/orgs/{orgId}/usage) — aggregate
+// action metadata only; see the backend's org/usage.go for the privacy line.
+export interface OrgUsage {
+  storage: {
+    used_bytes: number;
+    quota_bytes: number;
+    live_files: number;
+    trashed_files: number;
+  };
+  active_share_links: number;
+  members: {
+    user_id: string;
+    email: string;
+    role: "owner" | "member";
+    joined_at: string;
+    last_active_at: string | null;
+    events_30d: number;
+  }[];
+  activity_30d: Record<string, number>;
+}
+
 export interface FolderNode {
   id: string;
   org_id: string;

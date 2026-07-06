@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +23,62 @@ func (r *Repository) Record(ctx context.Context, orgID string, actorUserID *stri
 		`INSERT INTO activity_events (org_id, actor_user_id, verb, target_type, target_id) VALUES ($1, $2, $3, $4, $5)`,
 		orgID, actorUserID, verb, targetType, targetID)
 	return err
+}
+
+// ActorStat is one member's slice of the org's activity, for the owner
+// usage view (GET /v1/orgs/{orgId}/usage).
+type ActorStat struct {
+	EventsSince  int
+	LastActiveAt time.Time
+}
+
+// ActorStats aggregates per-actor counts since `since` and each actor's
+// all-time latest event in this org, keyed by user ID. Events with a NULL
+// actor (system-derived) are excluded — they aren't attributable to a
+// member.
+func (r *Repository) ActorStats(ctx context.Context, orgID string, since time.Time) (map[string]ActorStat, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT actor_user_id, COUNT(*) FILTER (WHERE created_at >= $2), MAX(created_at)
+		 FROM activity_events
+		 WHERE org_id = $1 AND actor_user_id IS NOT NULL
+		 GROUP BY actor_user_id`, orgID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]ActorStat)
+	for rows.Next() {
+		var userID string
+		var s ActorStat
+		if err := rows.Scan(&userID, &s.EventsSince, &s.LastActiveAt); err != nil {
+			return nil, err
+		}
+		out[userID] = s
+	}
+	return out, rows.Err()
+}
+
+// VerbCounts is the org-wide event breakdown by verb since `since`.
+func (r *Repository) VerbCounts(ctx context.Context, orgID string, since time.Time) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT verb, COUNT(*) FROM activity_events
+		 WHERE org_id = $1 AND created_at >= $2 GROUP BY verb`, orgID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var verb string
+		var n int
+		if err := rows.Scan(&verb, &n); err != nil {
+			return nil, err
+		}
+		out[verb] = n
+	}
+	return out, rows.Err()
 }
 
 // List returns events newest-first, keyset-paginated on the bigserial id

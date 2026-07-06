@@ -8,10 +8,11 @@ import (
 )
 
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	CreatedAt    time.Time
+	ID              string
+	Email           string
+	PasswordHash    string
+	IsPlatformAdmin bool
+	CreatedAt       time.Time
 }
 
 type TokenPair struct {

@@ -10,6 +10,7 @@ import type {
   FolderNode,
   Member,
   Organization,
+  OrgUsage,
   ResolvedShare,
   RingInfo,
   SearchResult,
@@ -113,6 +114,7 @@ export const api = {
       request<void>("/v1/auth/password/forgot", { method: "POST", body: json({ email }) }),
     resetPassword: (token: string, password: string) =>
       request<void>("/v1/auth/password/reset", { method: "POST", body: json({ token, password }) }),
+    me: () => request<{ user_id: string; email: string; is_platform_admin: boolean }>("/v1/auth/me"),
     totpStatus: () => request<{ enabled: boolean }>("/v1/auth/totp"),
     totpSetup: () => request<{ secret: string; otpauth_uri: string }>("/v1/auth/totp/setup", { method: "POST" }),
     totpConfirm: (code: string) => request<void>("/v1/auth/totp/confirm", { method: "POST", body: json({ code }) }),
@@ -148,6 +150,7 @@ export const api = {
         method: "POST",
         body: json({ file_ids: fileIds, expires_at: expiresAt }),
       }),
+    usage: (orgId: string) => request<OrgUsage>(`/v1/orgs/${orgId}/usage`),
     rootFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/folders`),
     trashedFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/trash/folders`),
     trashedFiles: (orgId: string) => request<FileNode[]>(`/v1/orgs/${orgId}/trash/files`),

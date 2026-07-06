@@ -26,13 +26,15 @@ type FolderCreator interface {
 const defaultRootFolderName = "Home"
 
 type Service struct {
-	repo    *Repository
-	users   UserLookup
-	folders FolderCreator
+	repo       *Repository
+	users      UserLookup
+	folders    FolderCreator
+	usage      UsageSources
+	quotaBytes int64 // NIMBUS_ORG_QUOTA_BYTES, reported in the usage view
 }
 
-func NewService(repo *Repository, users UserLookup, folders FolderCreator) *Service {
-	return &Service{repo: repo, users: users, folders: folders}
+func NewService(repo *Repository, users UserLookup, folders FolderCreator, usage UsageSources, quotaBytes int64) *Service {
+	return &Service{repo: repo, users: users, folders: folders, usage: usage, quotaBytes: quotaBytes}
 }
 
 // Create makes the org and its owner membership (CreateWithOwner's own

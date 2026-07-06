@@ -23,6 +23,17 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// ActiveLinkCount counts the org's live share links — not yet expired
+// (revoked links are deleted rows, so absence covers those). For the owner
+// usage view (GET /v1/orgs/{orgId}/usage).
+func (r *Repository) ActiveLinkCount(ctx context.Context, orgID string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM share_links
+		 WHERE org_id = $1 AND (expires_at IS NULL OR expires_at > now())`, orgID).Scan(&n)
+	return n, err
+}
+
 func scanShare(row pgx.Row) (ShareLink, error) {
 	var s ShareLink
 	err := row.Scan(&s.ID, &s.OrgID, &s.FileID, &s.FolderID, &s.Token, &s.CreatedBy, &s.ExpiresAt, &s.CreatedAt)

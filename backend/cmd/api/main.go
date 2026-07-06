@@ -209,6 +209,44 @@ func (a folderShareAdapter) IsSelfOrDescendant(ctx context.Context, folderID, ca
 	return a.folders.IsSelfOrDescendant(ctx, folderID, candidateID)
 }
 
+// orgStorageStatsAdapter satisfies org.StorageStatsReader using
+// file.Repository — the storage half of the owner usage view.
+type orgStorageStatsAdapter struct{ repo *file.Repository }
+
+func (a orgStorageStatsAdapter) OrgStorageStats(ctx context.Context, orgID string) (org.StorageStats, error) {
+	used, err := a.repo.OrgUsageBytes(ctx, orgID)
+	if err != nil {
+		return org.StorageStats{}, err
+	}
+	live, trashed, err := a.repo.OrgFileCounts(ctx, orgID)
+	if err != nil {
+		return org.StorageStats{}, err
+	}
+	return org.StorageStats{UsedBytes: used, LiveFiles: live, TrashedFiles: trashed}, nil
+}
+
+// orgActivityStatsAdapter satisfies org.ActivityStatsReader using
+// activity.Repository — per-member and per-verb aggregates for the usage
+// view.
+type orgActivityStatsAdapter struct{ repo *activity.Repository }
+
+func (a orgActivityStatsAdapter) ActorStats(ctx context.Context, orgID string, since time.Time) (map[string]org.MemberActivityStat, error) {
+	stats, err := a.repo.ActorStats(ctx, orgID, since)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]org.MemberActivityStat, len(stats))
+	for userID, s := range stats {
+		last := s.LastActiveAt
+		out[userID] = org.MemberActivityStat{Events: s.EventsSince, LastActiveAt: &last}
+	}
+	return out, nil
+}
+
+func (a orgActivityStatsAdapter) VerbCounts(ctx context.Context, orgID string, since time.Time) (map[string]int, error) {
+	return a.repo.VerbCounts(ctx, orgID, since)
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -277,13 +315,30 @@ func run() error {
 	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL)
 	authHandler := auth.NewHandler(authSvc)
 	requireAuth := auth.Middleware(authSvc)
+	requirePlatformAdmin := auth.RequirePlatformAdmin(authRepo)
 
-	// folderRepo is built early (ahead of the rest of folder's wiring
-	// below) because org.NewService needs it as a FolderCreator.
+	if n, err := authRepo.PromotePlatformAdmins(ctx, cfg.PlatformAdminEmails); err != nil {
+		return fmt.Errorf("promote platform admins: %w", err)
+	} else if n > 0 {
+		logger.Info("promoted platform admins", "count", n)
+	}
+
+	// These repos are built early (ahead of their own modules' wiring
+	// below) because org.NewService needs them: folderRepo as a
+	// FolderCreator, and the other three behind the usage-view ports
+	// (file/sharing/activity also satisfy later wiring — see below).
 	folderRepo := folder.NewRepository(pg)
+	fileRepo := file.NewRepository(pg)
+	sharingRepo := sharing.NewRepository(pg)
+	activityRepo := activity.NewRepository(pg)
 
 	orgRepo := org.NewRepository(pg)
-	orgSvc := org.NewService(orgRepo, userLookupAdapter{repo: authRepo}, folderRepo)
+	orgSvc := org.NewService(orgRepo, userLookupAdapter{repo: authRepo}, folderRepo,
+		org.UsageSources{
+			Storage:  orgStorageStatsAdapter{repo: fileRepo},
+			Shares:   sharingRepo, // ActiveLinkCount matches org.ShareLinkCounter directly
+			Activity: orgActivityStatsAdapter{repo: activityRepo},
+		}, cfg.OrgQuotaBytes)
 	orgHandler := org.NewHandler(orgSvc)
 	requireMember := org.RequireRole(orgRepo, org.RoleMember)
 	requireOwner := org.RequireRole(orgRepo, org.RoleOwner)
@@ -300,6 +355,7 @@ func run() error {
 	mux.HandleFunc("POST /v1/auth/logout", authHandler.Logout)
 	mux.HandleFunc("POST /v1/auth/password/forgot", authHandler.ForgotPassword)
 	mux.HandleFunc("POST /v1/auth/password/reset", authHandler.ResetPassword)
+	mux.Handle("GET /v1/auth/me", requireAuth(http.HandlerFunc(authHandler.Me)))
 	mux.Handle("GET /v1/auth/totp", requireAuth(http.HandlerFunc(authHandler.TOTPStatus)))
 	mux.Handle("POST /v1/auth/totp/setup", requireAuth(http.HandlerFunc(authHandler.TOTPSetup)))
 	mux.Handle("POST /v1/auth/totp/confirm", requireAuth(http.HandlerFunc(authHandler.TOTPConfirm)))
@@ -310,6 +366,8 @@ func run() error {
 	mux.Handle("GET /v1/orgs/{orgId}/members", requireAuth(requireMember(http.HandlerFunc(orgHandler.ListMembers))))
 	mux.Handle("POST /v1/orgs/{orgId}/members", requireAuth(requireOwner(http.HandlerFunc(orgHandler.AddMember))))
 	mux.Handle("DELETE /v1/orgs/{orgId}/members/{userId}", requireAuth(requireOwner(http.HandlerFunc(orgHandler.RemoveMember))))
+	// Org governance (owner-gated), distinct from /v1/admin/* cluster ops.
+	mux.Handle("GET /v1/orgs/{orgId}/usage", requireAuth(requireOwner(http.HandlerFunc(orgHandler.Usage))))
 
 	members := membershipAdapter{repo: orgRepo}
 
@@ -334,17 +392,16 @@ func run() error {
 	}
 	go router.HealthCheckLoop(ctx)
 
-	// fileRepo is built early (ahead of file's own wiring below) because the
-	// admin ring view needs it as a storage.FileChunkResolver.
-	fileRepo := file.NewRepository(pg)
 	storageHandler := storage.NewHandler(storageRepo, router, fileChunkResolverAdapter{repo: fileRepo}, cfg.ReplicationFactor)
 
-	mux.Handle("GET /v1/admin/nodes", requireAuth(http.HandlerFunc(storageHandler.ListNodes)))
-	mux.Handle("GET /v1/admin/ring", requireAuth(http.HandlerFunc(storageHandler.Ring)))
+	// /v1/admin/* is cluster ops (platform-wide reads: node health, ring,
+	// DLQ across all orgs) — platform-admin only, not org-role gated.
+	mux.Handle("GET /v1/admin/nodes", requireAuth(requirePlatformAdmin(http.HandlerFunc(storageHandler.ListNodes))))
+	mux.Handle("GET /v1/admin/ring", requireAuth(requirePlatformAdmin(http.HandlerFunc(storageHandler.Ring))))
 
 	dlqHandler := events.NewDLQHandler(events.NewRepository(pg), eventPublisher)
-	mux.Handle("GET /v1/admin/dlq", requireAuth(http.HandlerFunc(dlqHandler.List)))
-	mux.Handle("POST /v1/admin/dlq/{id}/retry", requireAuth(http.HandlerFunc(dlqHandler.Retry)))
+	mux.Handle("GET /v1/admin/dlq", requireAuth(requirePlatformAdmin(http.HandlerFunc(dlqHandler.List))))
+	mux.Handle("POST /v1/admin/dlq/{id}/retry", requireAuth(requirePlatformAdmin(http.HandlerFunc(dlqHandler.Retry))))
 
 	folderSvc := folder.NewService(folderRepo)
 	folderHandler := folder.NewHandler(folderSvc, fileListerAdapter{repo: fileRepo}, members)
@@ -373,7 +430,6 @@ func run() error {
 	mux.Handle("GET /v1/files/{fileId}/versions/{versionId}/download-plan", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.DownloadPlan))))
 	mux.Handle("POST /v1/files/{fileId}/versions/{versionId}/restore", requireAuth(requireFileAccess(http.HandlerFunc(fileHandler.RestoreVersion))))
 
-	activityRepo := activity.NewRepository(pg)
 	activitySvc := activity.NewService(activityRepo, live.NewPublisher(rdb))
 	activityHandler := activity.NewHandler(activitySvc)
 	liveHandler := live.NewHandler(rdb)
@@ -402,7 +458,6 @@ func run() error {
 	mux.Handle("POST /v1/uploads/{uploadId}/chunks/{hash}/commit", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.CommitChunk))))
 	mux.Handle("POST /v1/uploads/{uploadId}/complete", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.Complete))))
 
-	sharingRepo := sharing.NewRepository(pg)
 	sharingSvc := sharing.NewService(sharingRepo, fileShareLookupAdapter{repo: fileRepo}, fileScopeAdapter{repo: fileRepo},
 		folderShareAdapter{folders: folderRepo, files: fileRepo}, fileSvc)
 	sharingHandler := sharing.NewHandler(sharingSvc, members)

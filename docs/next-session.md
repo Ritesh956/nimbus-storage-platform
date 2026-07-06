@@ -1,6 +1,16 @@
 # Handoff — Next Session
 
-Updated at the end of the Tier 4 session (2026-07-06). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
+Updated at the end of the governance session (2026-07-06, same day as Tier 4). Read [docs/00-project-state.md](00-project-state.md) first — it's the up-to-date source of truth; this file is about what to do next, not what's already true.
+
+## What the governance session built (2026-07-06, after Tier 4 — user asked how roles work, then approved this scope)
+
+See docs/00-project-state.md item 22. Notes worth carrying:
+
+- **Two kinds of "admin" now, deliberately separate**: `/v1/admin/*` is cluster ops (nodes/ring/DLQ), gated by `users.is_platform_admin` (migration 000012, bootstrapped from `NIMBUS_PLATFORM_ADMIN_EMAILS` — compose promotes `tier1-demo@nimbus.dev`, `test@gmail.com`, `test1@gmail.com`); `GET /v1/orgs/{orgId}/usage` is org governance, gated by org-owner role. Don't collapse them.
+- **Promotion is promote-only** (`auth.Repository.PromotePlatformAdmins`): dropping an email from the env never revokes; revoke = manual `UPDATE users SET is_platform_admin = false`. A user registering *after* boot with a listed email isn't promoted until the next api restart — acceptable for a bootstrap mechanism, worth knowing before "it didn't work" confusion.
+- **`GET /v1/auth/me` exists now** — the frontend uses it to hide the Admin nav for non-admins (AppShell) and to render a readable access card on direct /admin navigation. The role checks are still server-side; /me is presentation only.
+- **Usage privacy line** (documented in `org/usage.go`): aggregate action metadata only, all already member-visible via the activity feed; no file names/content, and explicitly not `auth_audit_log` (spans orgs, user-private).
+- Demo accounts: `governance-demo@nimbus.dev` / `governance-demo-pass` is a plain member of Tier1 Demo Org (kept to demo the member-vs-owner contrast).
 
 ## The 15-item feature backlog is COMPLETE
 
@@ -10,7 +20,7 @@ Updated at the end of the Tier 4 session (2026-07-06). Read [docs/00-project-sta
 
 The one standing open thread. Full agreed recipe is in docs/00-project-state.md "Known issues" first bullet — don't re-derive it (VPS + Compose + Caddy/Let's Encrypt TLS in front of api **and** each MinIO node, DuckDNS subdomain, fresh secrets, narrowed CORS, `NEXT_PUBLIC_API_URL` set in Vercel and redeploy). **Prereq from the user: a VPS IP + SSH key — ask, don't assume.** All backend blockers (rate limiting, caps/quotas, DLQ visibility — Tier 2) are done.
 
-If the user wants more feature work instead, candidates that have come up but were never scoped/approved: per-org usage endpoint (FR-26, explicit v1 non-goal), Grafana alerting on new dead events, Helm-chart CI (`helm lint`/template/kind smoke), mailpit-on-kind. Treat these as suggestions to offer, not a backlog to burn down.
+If the user wants more feature work instead, candidates that have come up but were never scoped/approved: ~~per-org usage endpoint~~ (built in the governance session), Grafana alerting on new dead events, Helm-chart CI (`helm lint`/template/kind smoke), mailpit-on-kind, a delegated org-admin role tier (discussed and deliberately deferred — owner-only oversight is enough at current org sizes). Treat these as suggestions to offer, not a backlog to burn down. Note the Helm chart's ConfigMap doesn't set `NIMBUS_PLATFORM_ADMIN_EMAILS`, so on kind nobody is a platform admin until it's added or set manually — same Compose-only posture as mailpit.
 
 ## What the Tier 4 session actually built (2026-07-06)
 

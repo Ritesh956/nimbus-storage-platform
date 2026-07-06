@@ -26,9 +26,9 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 	var u User
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash) VALUES ($1, $2)
-		 RETURNING id, email, password_hash, created_at`,
+		 RETURNING id, email, password_hash, is_platform_admin, created_at`,
 		email, passwordHash,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsPlatformAdmin, &u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
@@ -42,8 +42,8 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var u User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, created_at FROM users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
+		`SELECT id, email, password_hash, is_platform_admin, created_at FROM users WHERE email = $1`, email,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsPlatformAdmin, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
@@ -53,12 +53,30 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 func (r *Repository) GetUserByID(ctx context.Context, id string) (User, error) {
 	var u User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, created_at FROM users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
+		`SELECT id, email, password_hash, is_platform_admin, created_at FROM users WHERE id = $1`, id,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsPlatformAdmin, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
 	return u, err
+}
+
+// PromotePlatformAdmins flips is_platform_admin on for every listed email
+// that has a registered account, and returns how many rows actually
+// changed. Deliberately promote-only: dropping an email from
+// NIMBUS_PLATFORM_ADMIN_EMAILS must not silently revoke access on the next
+// restart — revocation is an explicit manual UPDATE.
+func (r *Repository) PromotePlatformAdmins(ctx context.Context, emails []string) (int64, error) {
+	if len(emails) == 0 {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET is_platform_admin = true
+		 WHERE email = ANY($1) AND NOT is_platform_admin`, emails)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // CreateRefreshFamily starts a brand-new rotation family (fresh login), per

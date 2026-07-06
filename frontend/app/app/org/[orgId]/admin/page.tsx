@@ -16,16 +16,42 @@ import { timeAgo } from "@/lib/format";
 
 export default function AdminPage() {
   const { orgId } = useParams<{ orgId: string }>();
+  // Cluster ops is platform-admin gated server-side; check /me first so a
+  // non-admin who navigates here directly gets a readable explanation
+  // instead of silently-empty panels (and we don't fire requests that can
+  // only 403).
+  const { data: me } = useSWR("me", () => api.auth.me(), { shouldRetryOnError: false });
+  const isAdmin = me?.is_platform_admin === true;
   // Health transitions arrive over SSE (backlog #12) — that's what flips a
   // node red the moment the failover demo kills it. The slow poll remains
   // as a fallback and keeps the heartbeat column fresh; SSE only fires on
   // status *changes*.
-  const { data: nodes, mutate: mutateNodes } = useSWR("admin-nodes", () => api.admin.nodes(), {
+  const { data: nodes, mutate: mutateNodes } = useSWR(isAdmin ? "admin-nodes" : null, () => api.admin.nodes(), {
     refreshInterval: 10000,
   });
-  const { data: dlq, mutate: mutateDlq } = useSWR("admin-dlq", () => api.admin.dlq(), { refreshInterval: 5000 });
+  const { data: dlq, mutate: mutateDlq } = useSWR(isAdmin ? "admin-dlq" : null, () => api.admin.dlq(), {
+    refreshInterval: 5000,
+  });
   const [dlqError, setDlqError] = useState<string | null>(null);
   useLiveEvents(orgId, { onNodeHealth: () => void mutateNodes() });
+
+  if (me && !isAdmin) {
+    return (
+      <div className="flex flex-col gap-5">
+        <PageHeader title="Storage nodes" description="Cluster operations — node health, hash ring, dead-letter queue." />
+        <div className="panel flex flex-col items-center gap-2 px-5 py-10 text-center">
+          <span className="grid size-10 place-items-center rounded-xl bg-surface-deep text-muted-2">
+            <ServerIcon size={18} />
+          </span>
+          <p className="text-sm text-muted">Platform admin access required.</p>
+          <p className="max-w-sm text-xs leading-relaxed text-muted-2">
+            This page shows deployment-wide internals (storage nodes, hash ring, dead-letter queue), not
+            organization data — access is granted per account via NIMBUS_PLATFORM_ADMIN_EMAILS.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   async function retry(id: string) {
     setDlqError(null);

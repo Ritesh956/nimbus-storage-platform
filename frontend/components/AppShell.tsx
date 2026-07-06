@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import useSWR from "swr";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import {
   FolderIcon,
@@ -15,21 +17,24 @@ import {
   LogoMark,
 } from "./ui/Icons";
 
-const navItems = (orgId: string) => [
+const navItems = (orgId: string, platformAdmin: boolean) => [
   { href: `/app/org/${orgId}`, label: "Files", icon: FolderIcon, match: `/app/org/${orgId}/folder` },
   { href: `/app/org/${orgId}/search`, label: "Search", icon: SearchIcon },
   { href: `/app/org/${orgId}/members`, label: "Members", icon: UsersIcon },
   { href: `/app/org/${orgId}/trash`, label: "Trash", icon: TrashIcon },
   { href: `/app/org/${orgId}/activity`, label: "Activity", icon: PulseIcon },
   { href: `/app/org/${orgId}/security`, label: "Security", icon: ShieldIcon },
-  { href: `/app/org/${orgId}/admin`, label: "Admin", icon: ServerIcon },
+  // Cluster ops — platform-admin only (the backend 403s everyone else, so
+  // don't offer dead navigation).
+  ...(platformAdmin ? [{ href: `/app/org/${orgId}/admin`, label: "Admin", icon: ServerIcon }] : []),
 ];
 
 export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?: string; children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { logout } = useAuth();
-  const items = navItems(orgId);
+  const { data: me } = useSWR("me", () => api.auth.me(), { shouldRetryOnError: false });
+  const items = navItems(orgId, me?.is_platform_admin ?? false);
   const isActive = (item: { href: string; match?: string }) =>
     pathname === item.href || (item.match && pathname.startsWith(item.match));
 
@@ -112,7 +117,7 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
       </main>
 
       {/* Mobile bottom tab bar (<lg) */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-7 border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      <nav className={`fixed inset-x-0 bottom-0 z-20 grid ${items.length === 7 ? "grid-cols-7" : "grid-cols-6"} border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden`}>
         {items.map((item) => {
           const active = isActive(item);
           const Icon = item.icon;

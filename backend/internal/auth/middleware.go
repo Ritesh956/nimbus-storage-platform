@@ -44,6 +44,25 @@ func Middleware(svc *Service) func(http.Handler) http.Handler {
 	}
 }
 
+// RequirePlatformAdmin gates the /v1/admin/* cluster-ops routes (node
+// health, hash ring, DLQ) — platform-scoped reads that were previously
+// open to any authenticated user. Must run inside Middleware (it reads the
+// user ID from context). Cluster ops is a deployment-level concern, so the
+// check is a per-user flag, not an org role — org owners get org
+// governance (GET /v1/orgs/{orgId}/usage), not cluster internals.
+func RequirePlatformAdmin(repo *Repository) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, err := repo.GetUserByID(r.Context(), UserIDFromContext(r.Context()))
+			if err != nil || !u.IsPlatformAdmin {
+				httpserver.WriteError(w, r, httpserver.ErrForbidden, "platform admin access required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "

@@ -42,6 +42,12 @@ type Config struct {
 	SMTPFrom   string
 	WebBaseURL string
 
+	// PlatformAdminEmails bootstraps users.is_platform_admin at api boot
+	// (promote-only — see auth.Repository.PromotePlatformAdmins). Gates
+	// the /v1/admin/* cluster-ops routes. Empty means nobody is promoted;
+	// existing flags in the DB still apply.
+	PlatformAdminEmails []string
+
 	ChunkSizeBytes    int64
 	ReplicationFactor int // N
 	WriteQuorum       int // W
@@ -167,6 +173,12 @@ func Load() (Config, error) {
 
 	if cfg.StorageNodes, err = parseStorageNodes(os.Getenv("NIMBUS_STORAGE_NODES")); err != nil {
 		return Config{}, err
+	}
+
+	for _, e := range strings.Split(os.Getenv("NIMBUS_PLATFORM_ADMIN_EMAILS"), ",") {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			cfg.PlatformAdminEmails = append(cfg.PlatformAdminEmails, e)
+		}
 	}
 
 	if err := cfg.validate(); err != nil {

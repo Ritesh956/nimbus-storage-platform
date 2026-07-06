@@ -345,6 +345,17 @@ func (r *Repository) OrgUsageBytes(ctx context.Context, orgID string) (int64, er
 	return total, err
 }
 
+// OrgFileCounts splits the org's files into live vs trashed, for the
+// owner usage view (GET /v1/orgs/{orgId}/usage) — pairs with
+// OrgUsageBytes, which deliberately counts both.
+func (r *Repository) OrgFileCounts(ctx context.Context, orgID string) (live, trashed int, err error) {
+	err = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FILTER (WHERE deleted_at IS NULL),
+		        COUNT(*) FILTER (WHERE deleted_at IS NOT NULL)
+		 FROM files WHERE org_id = $1`, orgID).Scan(&live, &trashed)
+	return live, trashed, err
+}
+
 // SetThumbnailKey records where nimbus-worker stored a generated thumbnail
 // (docs/02-system-design.md §6) — called only after the storage write
 // itself has already succeeded, so a non-nil thumbnail_key is reliable

@@ -147,6 +147,21 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Me returns the caller's own identity — added so the frontend can decide
+// what to render (e.g. the Admin nav item) without probing gated routes.
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	u, err := h.svc.repo.GetUserByID(r.Context(), UserIDFromContext(r.Context()))
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "could not load profile")
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{
+		"user_id":           u.ID,
+		"email":             u.Email,
+		"is_platform_admin": u.IsPlatformAdmin,
+	})
+}
+
 // TOTPStatus tells the settings UI whether 2FA is on.
 func (h *Handler) TOTPStatus(w http.ResponseWriter, r *http.Request) {
 	enabled, err := h.svc.TOTPEnabled(r.Context(), UserIDFromContext(r.Context()))

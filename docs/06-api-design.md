@@ -1,7 +1,7 @@
 # API Design — Nimbus Storage Platform
 
-Status: **current as of the Tier 4 session (2026-07-06)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5); the post-Tier-3 session added folder/bundle share scopes and the public share children/download-plan routes (§7); the Tier 4 session added password reset and TOTP 2FA (§2).
-Version: 0.6
+Status: **current as of the governance session (2026-07-06)** — this doc is kept in sync with `backend/cmd/api/main.go`'s actual route table; every endpoint below exists and works. Re-verified route-by-route against `main.go` on Day 15's SRS DoD pass — no drift found. The Tier 1 session added `GET /v1/folders/{folderId}/path`, `GET /v1/files/{fileId}/thumbnail`, and version metadata on the children listing (§4); Tier 3 added `GET /v1/orgs/{orgId}/events` (SSE, §8), `GET /v1/admin/ring` (§9), and the GC note on `/chunks/check` (§5); the post-Tier-3 session added folder/bundle share scopes and the public share children/download-plan routes (§7); the Tier 4 session added password reset and TOTP 2FA (§2); the governance session added `GET /v1/auth/me` (§2), owner-gated `GET /v1/orgs/{orgId}/usage` (§3), and platform-admin gating on all of §9.
+Version: 0.7
 Depends on: [03-hld.md](03-hld.md) §2 (error model, middleware), [05-database-design.md](05-database-design.md)
 
 REST/JSON, versioned under `/v1`. Auth via `Authorization: Bearer <access_token>` except where marked public. CORS is enabled (`httpserver.CORS`, added Day 10 for the browser frontend) — permissive by default (`NIMBUS_CORS_ORIGIN=*`), safe here because auth is a Bearer token, not cookies.
@@ -39,6 +39,7 @@ Cursor pagination (`?cursor=&limit=`, response includes `next_cursor`) is implem
 | POST | `/v1/auth/logout` | `{refresh_token}` | 204 | blacklists access token jti in Redis + revokes refresh family |
 | POST | `/v1/auth/password/forgot` | `{email}` | 202 | public; always 202 whether or not the email is registered (no enumeration oracle). Emails a single-use reset link (1h TTL, SHA-256 of the token stored) via SMTP (`NIMBUS_SMTP_ADDR` — Mailpit in compose); with no SMTP configured the link is logged instead of sent |
 | POST | `/v1/auth/password/reset` | `{token, password}` | 204 | public; one transaction: consumes the token, rewrites the password hash, revokes **all** the user's refresh-token families. 400 on used/expired/unknown token |
+| GET | `/v1/auth/me` | — | 200 `{user_id, email, is_platform_admin}` | the caller's own identity — lets the frontend decide what to render (e.g. the Admin nav) without probing gated routes (governance session) |
 | GET | `/v1/auth/totp` | — | 200 `{enabled}` | whether the caller has confirmed TOTP |
 | POST | `/v1/auth/totp/setup` | — | 200 `{secret, otpauth_uri}` | starts (or restarts) a pending enrollment — login is not gated until confirmed; a confirmed enrollment is never overwritten. 409 if already enabled |
 | POST | `/v1/auth/totp/confirm` | `{code}` | 204 | verifies a current code and flips 2FA on. 400 bad code, 409 no pending enrollment |
@@ -57,6 +58,7 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 | GET | `/v1/orgs/{orgId}/members` | — | 200 `[{user_id, email, role}]` | any member |
 | POST | `/v1/orgs/{orgId}/members` | `{email, role}` | 201 `{org_id, user_id, role}` | owner only; 404 if email isn't a registered user |
 | DELETE | `/v1/orgs/{orgId}/members/{userId}` | — | 204 | owner only; 409 if target is the org owner |
+| GET | `/v1/orgs/{orgId}/usage` | — | 200 `{storage: {used_bytes, quota_bytes, live_files, trashed_files}, active_share_links, members: [{user_id, email, role, joined_at, last_active_at, events_30d}], activity_30d: {verb: n}}` | owner only (governance session) — org oversight assembled via ports over file/sharing/activity. Aggregate action metadata already member-visible via the activity feed; no file names/content, and deliberately not `auth_audit_log` (spans orgs, user-private). Deliberately under `/v1/orgs/`, not `/v1/admin/` — that prefix means platform-admin cluster ops (§9) |
 
 ## 4. Folders & files (metadata) — `internal/folder`, `internal/file`
 
@@ -130,14 +132,16 @@ A share link is scoped to exactly one of: a **file**, a **folder** (its whole su
 
 ## 9. Admin — `internal/storage`, `internal/events`
 
+All four routes below are **platform-admin gated** since the governance session (`auth.RequirePlatformAdmin`, 403 otherwise — previously any valid JWT sufficed): they're deployment-wide cluster reads (nodes, ring, DLQ across all orgs), not org data, so the check is `users.is_platform_admin` (migration 000012, bootstrapped from `NIMBUS_PLATFORM_ADMIN_EMAILS` at api boot; promote-only, revoke is a manual UPDATE), not an org role.
+
 | Method | Path | 2xx | Notes |
 |---|---|---|---|
-| GET | `/v1/admin/nodes` | 200 `[{id, endpoint, status, last_heartbeat_at}]` | this is what's on screen during the chaos demo; requires auth only, no platform-admin role exists |
-| GET | `/v1/admin/dlq` | 200 `{events: [{id, subject, payload, error, deliveries, status, created_at, retried_at?}]}` | dead-lettered NATS events (newest first, cap 100) — Tier 2 session; same auth-only posture as `/admin/nodes` |
+| GET | `/v1/admin/nodes` | 200 `[{id, endpoint, status, last_heartbeat_at}]` | this is what's on screen during the chaos demo |
+| GET | `/v1/admin/dlq` | 200 `{events: [{id, subject, payload, error, deliveries, status, created_at, retried_at?}]}` | dead-lettered NATS events (newest first, cap 100) — Tier 2 session |
 | POST | `/v1/admin/dlq/{id}/retry` | 200 `{status: "retried"}` | republishes the stored payload to its original subject; 409 if already retried |
 | GET | `/v1/admin/ring?file_id=` | 200 `{vnodes: [{position, node}], replication_factor, chunks?: [{sequence, hash, position, preference, locations}]}` | Tier 3 session (backlog #13): the live ring's vnode table (positions on the uint32 ring, same hashing placement uses). With `file_id`, adds the latest version's chunks — `preference` is today's health-ignoring ring walk, `locations` is where the bytes were actually committed; they diverge after a failover write. Rendered as the admin page's ring diagram |
 
-**Not implemented**: per-org usage (`GET /v1/admin/orgs/{orgId}/usage`, total bytes/file count) — was sketched in an earlier draft of this doc but never built; no roadmap day currently calls for it. `internal/admin` is a reserved, empty package (see docs/08-folder-structure.md).
+Per-org usage — sketched in an earlier draft of this doc as `/v1/admin/orgs/{orgId}/usage` — was **built in the governance session as `GET /v1/orgs/{orgId}/usage`** (§3): org governance is owner-gated and lives under `/v1/orgs/`, keeping this section purely cluster ops. `internal/admin` remains a reserved, empty package (see docs/08-folder-structure.md).
 
 ## 10. Explicitly not versioned as gRPC
 
