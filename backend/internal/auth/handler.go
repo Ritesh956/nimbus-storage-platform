@@ -20,6 +20,7 @@ func NewHandler(svc *Service) *Handler {
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	OrgName  string `json:"org_name"`
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.svc.Register(r.Context(), req.Email, req.Password)
+	u, err := h.svc.Register(r.Context(), req.Email, req.Password, strings.TrimSpace(req.OrgName))
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
 			httpserver.WriteError(w, r, httpserver.ErrConflict, "email already registered")

@@ -86,8 +86,11 @@ const json = (body: unknown) => JSON.stringify(body);
 
 export const api = {
   auth: {
-    register: (email: string, password: string) =>
-      request<{ user_id: string; email: string }>("/v1/auth/register", { method: "POST", body: json({ email, password }) }),
+    register: (email: string, password: string, orgName?: string) =>
+      request<{ user_id: string; email: string }>("/v1/auth/register", {
+        method: "POST",
+        body: json({ email, password, org_name: orgName ?? "" }),
+      }),
     // Login is two-step when the account has TOTP enabled: the first call
     // returns a challenge instead of tokens, and totpLogin finishes it.
     login: async (email: string, password: string): Promise<{ totpRequired: boolean; challengeToken?: string }> => {

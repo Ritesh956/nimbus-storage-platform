@@ -15,6 +15,7 @@ export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [orgName, setOrgName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -23,7 +24,7 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
-      await register(email, password);
+      await register(email, password, orgName);
       await login(email, password);
       router.replace("/app");
     } catch (err) {
@@ -66,6 +67,16 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
               <p className="mt-1.5 text-[11px] text-muted-2">At least 8 characters.</p>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted">Organization name</label>
+              <Input
+                type="text"
+                placeholder="Acme Inc"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+              />
+              <p className="mt-1.5 text-[11px] text-muted-2">Optional — we&apos;ll name it for you if you skip this.</p>
             </div>
             {error && <p className="text-xs text-danger">{error}</p>}
             <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">

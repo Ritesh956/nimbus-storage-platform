@@ -312,10 +312,6 @@ func run() error {
 	}
 
 	authRepo := auth.NewRepository(pg)
-	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL)
-	authHandler := auth.NewHandler(authSvc)
-	requireAuth := auth.Middleware(authSvc)
-	requirePlatformAdmin := auth.RequirePlatformAdmin(authRepo)
 
 	if n, err := authRepo.PromotePlatformAdmins(ctx, cfg.PlatformAdminEmails); err != nil {
 		return fmt.Errorf("promote platform admins: %w", err)
@@ -323,10 +319,11 @@ func run() error {
 		logger.Info("promoted platform admins", "count", n)
 	}
 
-	// These repos are built early (ahead of their own modules' wiring
-	// below) because org.NewService needs them: folderRepo as a
-	// FolderCreator, and the other three behind the usage-view ports
-	// (file/sharing/activity also satisfy later wiring — see below).
+	// These repos/services are built ahead of auth.NewService (below)
+	// because org.NewService needs them: folderRepo as a FolderCreator,
+	// the other three behind the usage-view ports, and orgSvc itself
+	// satisfies auth.OrgCreator — Register auto-creates a default org for
+	// every new user.
 	folderRepo := folder.NewRepository(pg)
 	fileRepo := file.NewRepository(pg)
 	sharingRepo := sharing.NewRepository(pg)
@@ -344,6 +341,11 @@ func run() error {
 	// Org governance (member management, usage view) opens at the admin
 	// tier; the finer owner-vs-admin bounds live in org.Service.
 	requireOrgAdmin := org.RequireRole(orgRepo, org.RoleAdmin)
+
+	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL, orgSvc)
+	authHandler := auth.NewHandler(authSvc)
+	requireAuth := auth.Middleware(authSvc)
+	requirePlatformAdmin := auth.RequirePlatformAdmin(authRepo)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpserver.Liveness)

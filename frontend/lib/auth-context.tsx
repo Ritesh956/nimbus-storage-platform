@@ -11,7 +11,7 @@ interface AuthContextValue {
   // page then collects a code and calls totpLogin to finish.
   login: (email: string, password: string) => Promise<{ totpRequired: boolean; challengeToken?: string }>;
   totpLogin: (challengeToken: string, code: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, orgName?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -44,8 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(true);
   }, []);
 
-  const register = useCallback(async (email: string, password: string) => {
-    await api.auth.register(email, password);
+  const register = useCallback(async (email: string, password: string, orgName?: string) => {
+    await api.auth.register(email, password, orgName);
   }, []);
 
   const logout = useCallback(async () => {

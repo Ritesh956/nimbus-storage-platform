@@ -22,6 +22,14 @@ type Mailer interface {
 	Send(to, subject, body string) error
 }
 
+// OrgCreator is the port auth uses to give every new user a default
+// organization at signup, without importing org's data-access layer
+// directly (mirrors org's own FolderCreator port — docs/03-hld.md §1).
+// Wired in cmd/api from org.Service at startup.
+type OrgCreator interface {
+	CreateForOwner(ctx context.Context, name, ownerUserID string) error
+}
+
 type Service struct {
 	repo       *Repository
 	redis      *redis.Client
@@ -29,9 +37,10 @@ type Service struct {
 	refreshTTL time.Duration
 	mailer     Mailer
 	webBaseURL string // frontend origin reset links point at
+	orgs       OrgCreator
 }
 
-func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration, mailer Mailer, webBaseURL string) *Service {
+func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration, mailer Mailer, webBaseURL string, orgs OrgCreator) *Service {
 	return &Service{
 		repo:       repo,
 		redis:      redisClient,
@@ -39,15 +48,40 @@ func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, a
 		refreshTTL: refreshTTL,
 		mailer:     mailer,
 		webBaseURL: strings.TrimRight(webBaseURL, "/"),
+		orgs:       orgs,
 	}
 }
 
-func (s *Service) Register(ctx context.Context, email, password string) (User, error) {
+// Register creates the user, then gives them a default org (named orgName,
+// or a generated default if blank) so a fresh signup always has somewhere
+// to land instead of an empty, org-less account. Org creation is
+// best-effort — the user row already exists by that point, so a failure
+// here is logged rather than failing the whole registration (same
+// trade-off org.Service.Create makes for its default root folder).
+func (s *Service) Register(ctx context.Context, email, password, orgName string) (User, error) {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return User{}, err
 	}
-	return s.repo.CreateUser(ctx, email, hash)
+	u, err := s.repo.CreateUser(ctx, email, hash)
+	if err != nil {
+		return User{}, err
+	}
+	if strings.TrimSpace(orgName) == "" {
+		orgName = defaultOrgName(email)
+	}
+	if err := s.orgs.CreateForOwner(ctx, orgName, u.ID); err != nil {
+		slog.Default().Warn("failed to create default org for new user", "user_id", u.ID, "error", err)
+	}
+	return u, nil
+}
+
+func defaultOrgName(email string) string {
+	local := email
+	if i := strings.Index(email, "@"); i > 0 {
+		local = email[:i]
+	}
+	return local + "'s Organization"
 }
 
 func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {

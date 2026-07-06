@@ -56,6 +56,14 @@ func (s *Service) Create(ctx context.Context, name, ownerUserID string) (Organiz
 	return o, nil
 }
 
+// CreateForOwner satisfies auth.OrgCreator — the default-org-on-signup
+// port (auth.Service.Register) — wrapping Create and discarding the
+// Organization, since auth only needs the side effect.
+func (s *Service) CreateForOwner(ctx context.Context, name, ownerUserID string) error {
+	_, err := s.Create(ctx, name, ownerUserID)
+	return err
+}
+
 func (s *Service) ListForUser(ctx context.Context, userID string) ([]Organization, error) {
 	return s.repo.ListForUser(ctx, userID)
 }
