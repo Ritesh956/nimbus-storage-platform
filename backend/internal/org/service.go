@@ -64,7 +64,13 @@ func (s *Service) ListMembers(ctx context.Context, orgID string) ([]Member, erro
 	return s.repo.ListMembers(ctx, orgID)
 }
 
-func (s *Service) AddMemberByEmail(ctx context.Context, orgID, email string, role Role) (Member, error) {
+// AddMemberByEmail enforces the admin-tier grant bound: only owners hand
+// out elevated roles (admin/owner); an admin caller can invite plain
+// members and nothing else.
+func (s *Service) AddMemberByEmail(ctx context.Context, orgID, email string, role, callerRole Role) (Member, error) {
+	if callerRole != RoleOwner && role != RoleMember {
+		return Member{}, ErrElevatedRoleNeedsOwner
+	}
 	userID, err := s.users.GetUserByEmail(ctx, email)
 	if err != nil {
 		return Member{}, ErrTargetUserNotFound
@@ -77,14 +83,25 @@ func (s *Service) AddMemberByEmail(ctx context.Context, orgID, email string, rol
 
 // RemoveMember refuses to remove the org's owner — an ownerless org is an
 // invalid state this module never allows, matching CreateWithOwner always
-// creating the pair together.
-func (s *Service) RemoveMember(ctx context.Context, orgID, userID string) error {
+// creating the pair together. An admin caller is additionally bounded to
+// removing plain members: peers (other admins) and owners are off-limits,
+// so a delegated admin can't consolidate control.
+func (s *Service) RemoveMember(ctx context.Context, orgID, userID string, callerRole Role) error {
 	o, err := s.repo.GetOrg(ctx, orgID)
 	if err != nil {
 		return err
 	}
 	if o.OwnerUserID == userID {
 		return ErrCannotRemoveOwner
+	}
+	if callerRole != RoleOwner {
+		target, err := s.repo.GetMembership(ctx, orgID, userID)
+		if err != nil {
+			return err
+		}
+		if target.Role != RoleMember {
+			return ErrAdminRemovesMembersOnly
+		}
 	}
 	return s.repo.RemoveMember(ctx, orgID, userID)
 }

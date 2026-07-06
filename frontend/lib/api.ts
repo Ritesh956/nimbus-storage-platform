@@ -133,7 +133,7 @@ export const api = {
     listMine: () => request<Organization[]>("/v1/orgs"),
     create: (name: string) => request<Organization>("/v1/orgs", { method: "POST", body: json({ name }) }),
     listMembers: (orgId: string) => request<Member[]>(`/v1/orgs/${orgId}/members`),
-    addMember: (orgId: string, email: string, role: "owner" | "member") =>
+    addMember: (orgId: string, email: string, role: "owner" | "admin" | "member") =>
       request(`/v1/orgs/${orgId}/members`, { method: "POST", body: json({ email, role }) }),
     removeMember: (orgId: string, userId: string) =>
       request(`/v1/orgs/${orgId}/members/${userId}`, { method: "DELETE" }),

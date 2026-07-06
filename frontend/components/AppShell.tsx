@@ -25,8 +25,9 @@ const navItems = (orgId: string, platformAdmin: boolean) => [
   { href: `/app/org/${orgId}/activity`, label: "Activity", icon: PulseIcon },
   { href: `/app/org/${orgId}/security`, label: "Security", icon: ShieldIcon },
   // Cluster ops — platform-admin only (the backend 403s everyone else, so
-  // don't offer dead navigation).
-  ...(platformAdmin ? [{ href: `/app/org/${orgId}/admin`, label: "Admin", icon: ServerIcon }] : []),
+  // don't offer dead navigation). Labeled "Cluster", not "Admin": org
+  // governance lives on the Members page, this is infrastructure.
+  ...(platformAdmin ? [{ href: `/app/org/${orgId}/admin`, label: "Cluster", icon: ServerIcon }] : []),
 ];
 
 export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?: string; children: React.ReactNode }) {

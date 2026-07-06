@@ -341,7 +341,9 @@ func run() error {
 		}, cfg.OrgQuotaBytes)
 	orgHandler := org.NewHandler(orgSvc)
 	requireMember := org.RequireRole(orgRepo, org.RoleMember)
-	requireOwner := org.RequireRole(orgRepo, org.RoleOwner)
+	// Org governance (member management, usage view) opens at the admin
+	// tier; the finer owner-vs-admin bounds live in org.Service.
+	requireOrgAdmin := org.RequireRole(orgRepo, org.RoleAdmin)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", httpserver.Liveness)
@@ -364,10 +366,10 @@ func run() error {
 	mux.Handle("POST /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.Create)))
 	mux.Handle("GET /v1/orgs", requireAuth(http.HandlerFunc(orgHandler.ListMine)))
 	mux.Handle("GET /v1/orgs/{orgId}/members", requireAuth(requireMember(http.HandlerFunc(orgHandler.ListMembers))))
-	mux.Handle("POST /v1/orgs/{orgId}/members", requireAuth(requireOwner(http.HandlerFunc(orgHandler.AddMember))))
-	mux.Handle("DELETE /v1/orgs/{orgId}/members/{userId}", requireAuth(requireOwner(http.HandlerFunc(orgHandler.RemoveMember))))
-	// Org governance (owner-gated), distinct from /v1/admin/* cluster ops.
-	mux.Handle("GET /v1/orgs/{orgId}/usage", requireAuth(requireOwner(http.HandlerFunc(orgHandler.Usage))))
+	mux.Handle("POST /v1/orgs/{orgId}/members", requireAuth(requireOrgAdmin(http.HandlerFunc(orgHandler.AddMember))))
+	mux.Handle("DELETE /v1/orgs/{orgId}/members/{userId}", requireAuth(requireOrgAdmin(http.HandlerFunc(orgHandler.RemoveMember))))
+	// Org governance (admin tier and up), distinct from /v1/admin/* cluster ops.
+	mux.Handle("GET /v1/orgs/{orgId}/usage", requireAuth(requireOrgAdmin(http.HandlerFunc(orgHandler.Usage))))
 
 	members := membershipAdapter{repo: orgRepo}
 

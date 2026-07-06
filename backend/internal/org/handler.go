@@ -80,17 +80,20 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := Role(req.Role)
-	if role != RoleOwner && role != RoleMember {
+	if role != RoleOwner && role != RoleAdmin && role != RoleMember {
 		role = RoleMember
 	}
+	caller, _ := MembershipFromContext(r.Context())
 
-	m, err := h.svc.AddMemberByEmail(r.Context(), orgID, req.Email, role)
+	m, err := h.svc.AddMemberByEmail(r.Context(), orgID, req.Email, role, caller.Role)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrTargetUserNotFound):
 			httpserver.WriteError(w, r, httpserver.ErrNotFound, "user not found")
 		case errors.Is(err, ErrAlreadyMember):
 			httpserver.WriteError(w, r, httpserver.ErrConflict, "user is already a member")
+		case errors.Is(err, ErrElevatedRoleNeedsOwner):
+			httpserver.WriteError(w, r, httpserver.ErrForbidden, err.Error())
 		default:
 			httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to add member")
 		}
@@ -115,12 +118,16 @@ func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	userID := r.PathValue("userId")
-	if err := h.svc.RemoveMember(r.Context(), orgID, userID); err != nil {
-		if errors.Is(err, ErrCannotRemoveOwner) {
+	caller, _ := MembershipFromContext(r.Context())
+	if err := h.svc.RemoveMember(r.Context(), orgID, userID, caller.Role); err != nil {
+		switch {
+		case errors.Is(err, ErrCannotRemoveOwner):
 			httpserver.WriteError(w, r, httpserver.ErrConflict, "cannot remove the organization owner")
-			return
+		case errors.Is(err, ErrAdminRemovesMembersOnly):
+			httpserver.WriteError(w, r, httpserver.ErrForbidden, err.Error())
+		default:
+			httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to remove member")
 		}
-		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to remove member")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

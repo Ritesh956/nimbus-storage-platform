@@ -38,7 +38,7 @@ export default function AdminPage() {
   if (me && !isAdmin) {
     return (
       <div className="flex flex-col gap-5">
-        <PageHeader title="Storage nodes" description="Cluster operations — node health, hash ring, dead-letter queue." />
+        <PageHeader title="Cluster operations" description="Deployment-wide internals: storage node health, the hash ring, and the event dead-letter queue." />
         <div className="panel flex flex-col items-center gap-2 px-5 py-10 text-center">
           <span className="grid size-10 place-items-center rounded-xl bg-surface-deep text-muted-2">
             <ServerIcon size={18} />
@@ -69,8 +69,8 @@ export default function AdminPage() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Storage nodes"
-        description="Consistent-hash-routed storage nodes, health-checked every 2s. Status changes stream in live."
+        title="Cluster operations"
+        description="Consistent-hash-routed storage nodes (health-checked every 2s, changes stream in live), the hash ring, and the event dead-letter queue."
       />
 
       {nodes && (

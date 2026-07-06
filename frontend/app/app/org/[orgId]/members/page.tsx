@@ -12,6 +12,10 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { StatCard } from "@/components/ui/Card";
 import { TablePanel, Th, Td, Tr } from "@/components/ui/Table";
 import { UsersIcon, TrashIcon, PlusIcon, FileIcon, LinkIcon, PulseIcon } from "@/components/ui/Icons";
+import type { OrgRole } from "@/lib/types";
+
+// Badge tones for the three-tier role ladder.
+const roleTone = { owner: "success", admin: "warning", member: "neutral" } as const;
 
 export default function MembersPage() {
   const { orgId } = useParams<{ orgId: string }>();
@@ -20,6 +24,15 @@ export default function MembersPage() {
   // them (ErrCannotRemoveOwner), so don't offer a button that can only fail.
   const { data: orgs } = useSWR("orgs", () => api.orgs.listMine());
   const creatorId = orgs?.find((o) => o.id === orgId)?.owner_user_id;
+  // The caller's own role decides which management controls to render at
+  // all — the server still enforces every rule; this just avoids offering
+  // buttons that can only 403 (same reasoning as the creator check above).
+  const { data: me } = useSWR("me", () => api.auth.me(), { shouldRetryOnError: false });
+  const myRole = members?.find((m) => m.user_id === me?.user_id)?.role;
+  const canManage = myRole === "owner" || myRole === "admin";
+  // Admins can only remove plain members; owners can remove anyone but the creator.
+  const canRemove = (m: { user_id: string; role: OrgRole }) =>
+    m.user_id !== creatorId && (myRole === "owner" || (myRole === "admin" && m.role === "member"));
   // Owner-gated oversight — members get a 403 here, which just means no
   // panel (the fetcher swallows it rather than surfacing an error for a
   // view they were never meant to see).
@@ -35,13 +48,14 @@ export default function MembersPage() {
     : 0;
 
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"owner" | "member">("member");
+  const [role, setRole] = useState<OrgRole>("member");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Invite is owner-gated server-side; rather than guessing the caller's
-  // role client-side, the form is always shown and a 403 is surfaced as a
-  // readable message.
+  // The form is only rendered for admin-and-up (canManage), and the role
+  // options match what the caller may actually grant — but the server
+  // still enforces everything, so a 403 stays readable rather than
+  // impossible-by-construction.
   async function invite(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -51,9 +65,7 @@ export default function MembersPage() {
       setEmail("");
       await mutate();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        setError("Only organization owners can add members.");
-      } else if (err instanceof ApiError && err.status === 404) {
+      if (err instanceof ApiError && err.status === 404) {
         setError("No registered user with that email.");
       } else {
         setError(err instanceof ApiError ? err.message : "failed to add member");
@@ -69,11 +81,7 @@ export default function MembersPage() {
       await api.orgs.removeMember(orgId, userId);
       await mutate();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        setError("Only organization owners can remove members.");
-      } else {
-        setError(err instanceof ApiError ? err.message : "failed to remove member");
-      }
+      setError(err instanceof ApiError ? err.message : "failed to remove member");
     }
   }
 
@@ -81,11 +89,15 @@ export default function MembersPage() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Members"
-        description="People with access to this organization. Adding requires an owner role and an already-registered email."
+        description="People with access to this organization, and — for owners and admins — how it's being used."
       />
 
       {usage && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="flex flex-col gap-2">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-2">
+            Organization usage
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             label="Storage used"
             value={formatBytes(usage.storage.used_bytes)}
@@ -108,30 +120,36 @@ export default function MembersPage() {
             chip={`${usage.activity_30d["uploaded"] ?? 0} uploads`}
             chipTone="neutral"
           />
+          </div>
         </div>
       )}
 
-      <form onSubmit={invite} className="flex flex-col gap-2 sm:flex-row">
-        <Input
-          type="email"
-          required
-          placeholder="teammate@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value as "owner" | "member")}
-          className="glow-ring rounded-lg border border-border bg-surface-deep px-3 py-2 text-sm text-foreground focus:border-accent"
-        >
-          <option value="member">Member</option>
-          <option value="owner">Owner</option>
-        </select>
-        <Button type="submit" disabled={busy || !email} className="shrink-0">
-          <PlusIcon size={13} />
-          Add member
-        </Button>
-      </form>
+      {canManage && (
+        <form onSubmit={invite} className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            type="email"
+            required
+            placeholder="teammate@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as OrgRole)}
+            className="glow-ring rounded-lg border border-border bg-surface-deep px-3 py-2 text-sm text-foreground focus:border-accent"
+          >
+            <option value="member">Member</option>
+            {/* Elevated roles are owner-grantable only (the server rejects
+                an admin trying — these options just aren't offered). */}
+            {myRole === "owner" && <option value="admin">Admin</option>}
+            {myRole === "owner" && <option value="owner">Owner</option>}
+          </select>
+          <Button type="submit" disabled={busy || !email} className="shrink-0">
+            <PlusIcon size={13} />
+            Add member
+          </Button>
+        </form>
+      )}
       {error && <p className="-mt-2 text-xs text-danger">{error}</p>}
 
       <TablePanel title={members ? `${members.length} member${members.length === 1 ? "" : "s"}` : "Members"}>
@@ -159,7 +177,7 @@ export default function MembersPage() {
                 </Td>
                 <Td>
                   <span className="inline-flex items-center gap-2">
-                    <Badge tone={m.role === "owner" ? "success" : "neutral"}>{m.role}</Badge>
+                    <Badge tone={roleTone[m.role]}>{m.role}</Badge>
                     {m.user_id === creatorId && (
                       <span className="text-[11px] text-muted-2">creator</span>
                     )}
@@ -172,7 +190,7 @@ export default function MembersPage() {
                 )}
                 {usage && <Td className="text-xs text-muted-2">{stats?.events_30d ?? 0}</Td>}
                 <Td className="text-right">
-                  {m.user_id !== creatorId && (
+                  {canRemove(m) && (
                     <button
                       onClick={() => remove(m.user_id)}
                       title="Remove member"

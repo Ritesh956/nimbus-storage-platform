@@ -4,10 +4,14 @@ export interface Organization {
   owner_user_id: string;
 }
 
+// Org RBAC ladder (governance session): owner > admin > member. Admin is
+// delegated governance — usage view + bounded member management.
+export type OrgRole = "owner" | "admin" | "member";
+
 export interface Member {
   user_id: string;
   email: string;
-  role: "owner" | "member";
+  role: OrgRole;
 }
 
 // Owner-gated org oversight (GET /v1/orgs/{orgId}/usage) — aggregate
@@ -23,7 +27,7 @@ export interface OrgUsage {
   members: {
     user_id: string;
     email: string;
-    role: "owner" | "member";
+    role: OrgRole;
     joined_at: string;
     last_active_at: string | null;
     events_30d: number;
