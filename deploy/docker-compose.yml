@@ -82,7 +82,7 @@ services:
       NIMBUS_POSTGRES_DSN: postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable
       NIMBUS_REDIS_ADDR: redis:6379
       NIMBUS_NATS_URL: nats://nats:4222
-      NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+      NIMBUS_STORAGE_NODES: ${NIMBUS_STORAGE_NODES:-node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020}
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
       NIMBUS_SMTP_ADDR: mailpit:1025
@@ -105,7 +105,7 @@ services:
       NIMBUS_POSTGRES_DSN: postgres://nimbus:nimbus@postgres:5432/nimbus?sslmode=disable
       NIMBUS_REDIS_ADDR: redis:6379
       NIMBUS_NATS_URL: nats://nats:4222
-      NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+      NIMBUS_STORAGE_NODES: ${NIMBUS_STORAGE_NODES:-node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020}
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
     depends_on:
@@ -119,7 +119,9 @@ services:
       dockerfile: deploy/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8080
-    ports: ["3000:3000"]
+    # Host 3010, not 3000 — this machine also runs an unrelated project's
+    # native `next dev` on 3000; container-internal port is still 3000.
+    ports: ["3010:3000"]
     depends_on:
       nimbus-api: { condition: service_started }
 
