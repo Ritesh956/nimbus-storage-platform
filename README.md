@@ -25,7 +25,7 @@ flowchart TB
         WEB[Next.js Web App]
     end
 
-    subgraph API[nimbus-api  (modular monolith)]
+    subgraph API["nimbus-api (modular monolith)"]
         AUTH[auth module]
         META[metadata module]
         ROUTE[storage-routing module\nconsistent hash ring + node health]
@@ -33,7 +33,7 @@ flowchart TB
         SEARCH[search module]
     end
 
-    WORKER[nimbus-worker\n(extracted service)]
+    WORKER["nimbus-worker\n(extracted service)"]
 
     subgraph Storage["Storage nodes (standalone MinIO x3+)"]
         N1[(node-1)]
