@@ -29,6 +29,12 @@ func NewHandler(svc *Service, members MembershipChecker) *Handler {
 	return &Handler{svc: svc, members: members}
 }
 
+// maxShareTTL bounds how far in the future expires_at may be — share links
+// no longer support "no expiry" (user-requested, to cap how many links stay
+// resolvable indefinitely), so every request must supply one, and it must
+// fall within the 1h/1d/7d presets the frontend actually offers.
+const maxShareTTL = 7 * 24 * time.Hour
+
 type createShareRequest struct {
 	ExpiresAt *string  `json:"expires_at"`
 	FileIDs   []string `json:"file_ids"` // bundle creation only (POST /v1/orgs/{orgId}/shares)
@@ -42,16 +48,21 @@ func parseCreateShare(w http.ResponseWriter, r *http.Request) (createShareReques
 			return req, nil, false
 		}
 	}
-	var expiresAt *time.Time
-	if req.ExpiresAt != nil {
-		t, err := time.Parse(time.RFC3339, *req.ExpiresAt)
-		if err != nil {
-			httpserver.WriteError(w, r, httpserver.ErrInvalid, "expires_at must be RFC3339")
-			return req, nil, false
-		}
-		expiresAt = &t
+	if req.ExpiresAt == nil {
+		httpserver.WriteError(w, r, httpserver.ErrInvalid, "expires_at is required")
+		return req, nil, false
 	}
-	return req, expiresAt, true
+	t, err := time.Parse(time.RFC3339, *req.ExpiresAt)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrInvalid, "expires_at must be RFC3339")
+		return req, nil, false
+	}
+	now := time.Now()
+	if !t.After(now) || t.After(now.Add(maxShareTTL)) {
+		httpserver.WriteError(w, r, httpserver.ErrInvalid, "expires_at must be between now and 7 days from now")
+		return req, nil, false
+	}
+	return req, &t, true
 }
 
 // Create serves POST /v1/files/{fileId}/share — authorized by

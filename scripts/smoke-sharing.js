@@ -53,9 +53,30 @@ async function main() {
   const { file_id } = await uploadSmallFile(ownerAccess, folderId, 'notes.txt', content);
   console.log(`uploaded file_id=${file_id}`);
 
-  console.log('== create share link (no expiry) ==');
-  const link = await jsonFetchOk(`${BASE}/v1/files/${file_id}/share`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({}) });
+  console.log('== create share link (expires in 1 hour) ==');
+  const link = await jsonFetchOk(`${BASE}/v1/files/${file_id}/share`, {
+    method: 'POST', headers: ownerAuth, body: JSON.stringify({ expires_at: new Date(Date.now() + 3600_000).toISOString() }),
+  });
   console.log(`  token=${link.token}`);
+
+  console.log('== omitting expires_at is rejected (no more "no expiry") ==');
+  const missingExpiry = await jsonFetch(`${BASE}/v1/files/${file_id}/share`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({}) });
+  if (missingExpiry.status !== 400) throw new Error(`expected 400 for missing expires_at, got ${missingExpiry.status}`);
+  console.log('  OK: missing expires_at correctly rejected (400)');
+
+  console.log('== a past expires_at is rejected ==');
+  const pastExpiry = await jsonFetch(`${BASE}/v1/files/${file_id}/share`, {
+    method: 'POST', headers: ownerAuth, body: JSON.stringify({ expires_at: new Date(Date.now() - 60_000).toISOString() }),
+  });
+  if (pastExpiry.status !== 400) throw new Error(`expected 400 for past expires_at, got ${pastExpiry.status}`);
+  console.log('  OK: past expires_at correctly rejected (400)');
+
+  console.log('== an expires_at beyond the 7-day max is rejected ==');
+  const tooFarExpiry = await jsonFetch(`${BASE}/v1/files/${file_id}/share`, {
+    method: 'POST', headers: ownerAuth, body: JSON.stringify({ expires_at: new Date(Date.now() + 8 * 24 * 3600_000).toISOString() }),
+  });
+  if (tooFarExpiry.status !== 400) throw new Error(`expected 400 for expires_at beyond 7 days, got ${tooFarExpiry.status}`);
+  console.log('  OK: expires_at beyond 7 days correctly rejected (400)');
 
   console.log('== resolve share link WITHOUT any Authorization header ==');
   const resolved = await jsonFetchOk(`${BASE}/v1/shares/${link.token}`);
@@ -73,11 +94,12 @@ async function main() {
   if (sha256(downloaded) !== sha256(content)) throw new Error('shared download checksum mismatch!');
   console.log('  OK: checksum matches');
 
-  console.log('== create an already-expired share link ==');
-  const expired = await jsonFetchOk(`${BASE}/v1/files/${file_id}/share`, {
-    method: 'POST', headers: ownerAuth, body: JSON.stringify({ expires_at: new Date(Date.now() - 60_000).toISOString() }),
+  console.log('== a link expires naturally and is then rejected ==');
+  const shortLived = await jsonFetchOk(`${BASE}/v1/files/${file_id}/share`, {
+    method: 'POST', headers: ownerAuth, body: JSON.stringify({ expires_at: new Date(Date.now() + 2_000).toISOString() }),
   });
-  const expiredResolve = await jsonFetch(`${BASE}/v1/shares/${expired.token}`);
+  await new Promise((r) => setTimeout(r, 3_000));
+  const expiredResolve = await jsonFetch(`${BASE}/v1/shares/${shortLived.token}`);
   if (expiredResolve.status !== 403) throw new Error(`expected 403 for expired link, got ${expiredResolve.status}`);
   console.log('  OK: expired link correctly rejected (403)');
 
