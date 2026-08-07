@@ -10,3 +10,4 @@ data:
   NIMBUS_REDIS_ADDR: "redis.{{ .Values.namespace }}.svc.cluster.local:6379"
   NIMBUS_NATS_URL: "nats://nats.{{ .Values.namespace }}.svc.cluster.local:4222"
   NIMBUS_STORAGE_NODES: {{ .Values.env.NIMBUS_STORAGE_NODES | quote }}
+  NIMBUS_ORG_QUOTA_BYTES: {{ .Values.env.NIMBUS_ORG_QUOTA_BYTES | quote }}

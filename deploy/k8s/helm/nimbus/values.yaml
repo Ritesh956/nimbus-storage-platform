@@ -28,6 +28,9 @@ env:
   # the kind extraPortMappings' localhost ports presigned URLs need to be
   # reachable from a browser on the host (see deploy/k8s/kind-config.yaml).
   NIMBUS_STORAGE_NODES: "node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020"
+  # Per-org total storage quota. Default in config.go is 10 GiB; overridden
+  # here to 5 GiB (5 * 1024^3 bytes), same as deploy/.env.
+  NIMBUS_ORG_QUOTA_BYTES: "5368709120"
 
 # Dev-only defaults, same pattern as deploy/.env's placeholder JWT secret —
 # override with --set or -f a values file for anything beyond a local kind
