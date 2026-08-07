@@ -66,7 +66,16 @@ func newTestAuthService(t *testing.T) *auth.Service {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	repo := auth.NewRepository(pool)
-	return auth.NewService(repo, rdb, "integration-test-secret-at-least-32-characters", 15*time.Minute, 7*24*time.Hour, nil, "http://localhost:3000")
+	return auth.NewService(repo, rdb, "integration-test-secret-at-least-32-characters", 15*time.Minute, 7*24*time.Hour, nil, "http://localhost:3000", noopOrgCreator{})
+}
+
+// noopOrgCreator satisfies auth.OrgCreator without pulling in the org
+// module: Register's default-org creation is best-effort and this test
+// only cares about refresh-token rotation behavior.
+type noopOrgCreator struct{}
+
+func (noopOrgCreator) CreateForOwner(ctx context.Context, name, ownerUserID string) error {
+	return nil
 }
 
 // TestRefresh_ReuseOfRotatedTokenRevokesWholeFamily locks in the
@@ -82,13 +91,14 @@ func TestRefresh_ReuseOfRotatedTokenRevokesWholeFamily(t *testing.T) {
 
 	email := fmt.Sprintf("refresh-reuse-%d@nimbus.test", time.Now().UnixNano())
 	password := "correct-horse-battery-staple"
-	if _, err := svc.Register(ctx, email, password); err != nil {
+	if _, err := svc.Register(ctx, email, password, ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	_, pair1, err := svc.Login(ctx, email, password)
+	loginResult, err := svc.Login(ctx, email, password)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
+	pair1 := loginResult.Tokens
 
 	pair2, err := svc.Refresh(ctx, pair1.RefreshToken)
 	if err != nil {
