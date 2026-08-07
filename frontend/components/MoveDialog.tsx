@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
+import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { ArrowLeftIcon, FolderIcon } from "./ui/Icons";
 
@@ -31,12 +32,8 @@ export function MoveDialog({ orgId, item, onClose, onMoved }: Props) {
     () => (current ? api.folders.children(current.id).then((d) => d.folders) : api.orgs.rootFolders(orgId)),
   );
   const folders = data?.filter((f) => f.id !== item.id);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const titleId = useId();
+  const panelRef = useModal<HTMLDivElement>(onClose);
 
   // Files must live in a folder; folders may also move to root.
   const canMoveHere =
@@ -62,11 +59,16 @@ export function MoveDialog({ orgId, item, onClose, onMoved }: Props) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="panel flex w-full max-w-md flex-col overflow-hidden"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="panel flex w-full max-w-md flex-col overflow-hidden outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-border/60 px-5 py-3.5">
-          <div className="text-sm font-medium">Move &ldquo;{item.name}&rdquo;</div>
+          <div id={titleId} className="text-sm font-medium">Move &ldquo;{item.name}&rdquo;</div>
           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-2">
             {path.length > 0 && (
               <button

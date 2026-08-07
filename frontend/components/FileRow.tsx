@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
+import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { Checkbox } from "./ui/Checkbox";
 import { MoveDialog } from "./MoveDialog";
@@ -37,15 +38,28 @@ function Thumb({ fileId, name, onPreview }: { fileId: string; name: string; onPr
       </span>
     );
   }
+  // Not a real <button>: this renders inside FileRow's own row-toggle
+  // <button>, and interactive content can't nest in a <button> (same
+  // constraint noted where the row's Checkbox is kept as a sibling instead
+  // of a child). tabIndex + onKeyDown makes it keyboard-operable anyway —
+  // it was previously a role="button" span with no keyboard path at all.
   return (
     <span
       role="button"
+      tabIndex={0}
       title="Preview"
+      aria-label={`Preview ${name}`}
       onClick={(e) => {
         e.stopPropagation();
         onPreview(url);
       }}
-      className="glow-ring block size-8 shrink-0 overflow-hidden rounded-lg bg-surface-deep"
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onPreview(url);
+      }}
+      className="glow-ring block size-8 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-surface-deep"
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- presigned MinIO URL, not optimizable */}
       <img
@@ -61,11 +75,7 @@ function Thumb({ fileId, name, onPreview }: { fileId: string; name: string; onPr
 // PreviewModal shows the thumbnail at full size (256px longest edge — what
 // the worker generates) over a dismissable backdrop.
 function PreviewModal({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const panelRef = useModal<HTMLDivElement>(onClose);
 
   return (
     <div
@@ -73,7 +83,12 @@ function PreviewModal({ url, name, onClose }: { url: string; name: string; onClo
       onClick={onClose}
     >
       <div
-        className="panel flex max-w-lg flex-col gap-3 p-4"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Preview of ${name}`}
+        tabIndex={-1}
+        className="panel flex max-w-lg flex-col gap-3 p-4 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- presigned MinIO URL, not optimizable */}
@@ -89,10 +104,9 @@ function PreviewModal({ url, name, onClose }: { url: string; name: string; onClo
   );
 }
 
-// Share-link expiry presets — the API accepts any RFC3339 expires_at; these
-// are just the sensible dropdown steps (never = omit the field).
+// Share-link expiry presets. Expiry is mandatory — no "no expiry" option —
+// to bound how many share links stay resolvable indefinitely.
 const expiryOptions = {
-  never: { label: "No expiry", ms: 0 },
   "1h": { label: "Expires in 1 hour", ms: 60 * 60 * 1000 },
   "1d": { label: "Expires in 1 day", ms: 24 * 60 * 60 * 1000 },
   "7d": { label: "Expires in 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
@@ -122,7 +136,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
-  const [shareExpiry, setShareExpiry] = useState<keyof typeof expiryOptions>("never");
+  const [shareExpiry, setShareExpiry] = useState<keyof typeof expiryOptions>("1h");
   const [shareExpiresAt, setShareExpiresAt] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
 
@@ -182,10 +196,9 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
     setBusy(true);
     setError(null);
     try {
-      const ttlMs = expiryOptions[shareExpiry].ms;
-      const expiresAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : undefined;
+      const expiresAt = new Date(Date.now() + expiryOptions[shareExpiry].ms).toISOString();
       const link = await api.files.share(fileId, expiresAt);
-      setShareExpiresAt(expiresAt ?? null);
+      setShareExpiresAt(expiresAt);
       // The backend's own `url` field points at itself
       // (NIMBUS_API/v1/shares/{token}, raw JSON) since it has no idea
       // what the frontend's origin is — found by actually clicking
@@ -237,25 +250,29 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
 
   return (
     <li className="border-t border-border/40 first:border-t-0">
-      {/* Checkbox lives beside the row button, not inside it — interactive
-          content can't nest in a <button>. */}
+      {/* Checkbox and the file icon/thumbnail both live beside the row
+          button, not inside it — interactive content (Checkbox's real
+          input, Thumb's keyboard-focusable preview trigger) can't nest in
+          a <button>. */}
       <div className="flex items-center">
         {onToggleSelect && (
           <label className="shrink-0 cursor-pointer py-3 pl-4 sm:pl-5" title="Select for sharing">
             <Checkbox checked={selected} onChange={onToggleSelect} />
           </label>
         )}
+        <span className={`flex shrink-0 items-center py-3 ${onToggleSelect ? "pl-3" : "pl-4 sm:pl-5"}`}>
+          {file.has_thumbnail ? (
+            <Thumb fileId={fileId} name={name} onPreview={setPreview} />
+          ) : (
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
+              <FileIcon size={15} />
+            </span>
+          )}
+        </span>
         <button
           onClick={toggle}
-          className={`glow-ring flex w-full min-w-0 items-center gap-3 py-3 pr-4 text-left transition-colors hover:bg-surface-2/60 sm:pr-5 ${onToggleSelect ? "pl-3" : "pl-4 sm:pl-5"}`}
+          className="glow-ring flex w-full min-w-0 items-center gap-3 py-3 pl-3 pr-4 text-left transition-colors hover:bg-surface-2/60 sm:pr-5"
         >
-        {file.has_thumbnail ? (
-          <Thumb fileId={fileId} name={name} onPreview={setPreview} />
-        ) : (
-          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent">
-            <FileIcon size={15} />
-          </span>
-        )}
         {renaming ? (
           <input
             className="glow-ring flex-1 rounded-lg border border-border bg-surface-deep px-2 py-1 text-sm"

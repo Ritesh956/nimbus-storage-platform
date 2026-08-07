@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { CopyIcon, FolderIcon, LinkIcon } from "./ui/Icons";
 import { formatDate } from "@/lib/format";
 import type { ShareLink } from "@/lib/types";
 
-// Same presets as FileRow's inline single-file share — the API accepts any
-// RFC3339 expires_at; these are just the sensible dropdown steps.
+// Same presets as FileRow's inline single-file share. Expiry is mandatory —
+// no "no expiry" option — to bound how many share links stay resolvable
+// indefinitely.
 const expiryOptions = {
-  never: { label: "No expiry", ms: 0 },
   "1h": { label: "Expires in 1 hour", ms: 60 * 60 * 1000 },
   "1d": { label: "Expires in 1 day", ms: 24 * 60 * 60 * 1000 },
   "7d": { label: "Expires in 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
@@ -24,24 +25,19 @@ type Target =
 // hand-picked multi-file bundle (one link instead of one per file). The
 // single-file share stays inline in FileRow where it always lived.
 export function ShareDialog({ target, onClose }: { target: Target; onClose: () => void }) {
-  const [expiry, setExpiry] = useState<keyof typeof expiryOptions>("never");
+  const [expiry, setExpiry] = useState<keyof typeof expiryOptions>("1h");
   const [link, setLink] = useState<(ShareLink & { expiresAt: string | null }) | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const titleId = useId();
+  const panelRef = useModal<HTMLDivElement>(onClose);
 
   async function create() {
     setBusy(true);
     setError(null);
     try {
-      const ttlMs = expiryOptions[expiry].ms;
-      const expiresAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : undefined;
+      const expiresAt = new Date(Date.now() + expiryOptions[expiry].ms).toISOString();
       const created =
         target.kind === "folder"
           ? await api.folders.share(target.id, expiresAt)
@@ -49,7 +45,7 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
       // Point at the frontend's own /shares page, not the backend's raw
       // JSON URL — same reasoning as FileRow.createShare.
       const url = `${window.location.origin}/shares/${created.token}`;
-      setLink({ ...created, url, expiresAt: expiresAt ?? null });
+      setLink({ ...created, url, expiresAt });
       // Auto-copy so sharing is one click; the Copy button stays as the
       // fallback for when the clipboard write is refused (unfocused tab).
       try {
@@ -76,13 +72,21 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="panel w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="panel w-full max-w-md overflow-hidden outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start gap-3 border-b border-border/60 px-5 py-4">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-deep text-accent-2">
             {target.kind === "folder" ? <FolderIcon size={16} /> : <LinkIcon size={16} />}
           </span>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-medium">{title}</h2>
+            <h2 id={titleId} className="truncate text-sm font-medium">{title}</h2>
             <p className="mt-1 text-xs leading-relaxed text-muted-2">{description}</p>
           </div>
         </div>

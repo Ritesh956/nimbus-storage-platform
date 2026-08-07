@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
+import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { TrashIcon } from "./ui/Icons";
 
@@ -20,12 +21,8 @@ interface Props {
 export function ConfirmDialog({ title, body, confirmLabel, onCancel, onConfirm }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancel();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  const titleId = useId();
+  const panelRef = useModal<HTMLDivElement>(onCancel);
 
   async function confirm() {
     setBusy(true);
@@ -40,13 +37,21 @@ export function ConfirmDialog({ title, body, confirmLabel, onCancel, onConfirm }
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onCancel}>
-      <div className="panel w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="panel w-full max-w-sm overflow-hidden outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start gap-3 px-5 pt-5">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-danger/10 text-danger">
             <TrashIcon size={16} />
           </span>
           <div className="min-w-0">
-            <h2 className="text-sm font-medium">{title}</h2>
+            <h2 id={titleId} className="text-sm font-medium">{title}</h2>
             <p className="mt-1 text-xs leading-relaxed text-muted">{body}</p>
           </div>
         </div>

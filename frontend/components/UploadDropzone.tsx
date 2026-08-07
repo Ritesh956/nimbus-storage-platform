@@ -40,6 +40,9 @@ export function UploadDropzone({ folderId, onUploaded }: Props) {
   return (
     <div>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="Upload files — drag and drop, or activate to browse"
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -51,6 +54,11 @@ export function UploadDropzone({ folderId, onUploaded }: Props) {
           if (e.dataTransfer.files.length) startUploads(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          inputRef.current?.click();
+        }}
         className={`glow-ring flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-6 py-7 text-center transition-colors ${
           dragging
             ? "border-accent bg-accent-soft"

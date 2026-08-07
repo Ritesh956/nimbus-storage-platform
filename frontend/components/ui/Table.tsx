@@ -47,7 +47,21 @@ export function Tr({
   return (
     <tr
       onClick={onClick}
-      className={`border-t border-border/40 transition-colors hover:bg-surface-2/60 ${onClick ? "cursor-pointer" : ""} ${className}`}
+      // A clickable row needs its own keyboard path — tabIndex makes it a
+      // tab stop, onKeyDown gives it the same Enter/Space activation a
+      // native control gets for free (role="button" alone doesn't).
+      tabIndex={onClick ? 0 : undefined}
+      role={onClick ? "button" : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onClick();
+            }
+          : undefined
+      }
+      className={`glow-ring border-t border-border/40 transition-colors hover:bg-surface-2/60 ${onClick ? "cursor-pointer" : ""} ${className}`}
     >
       {children}
     </tr>
