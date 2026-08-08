@@ -11,3 +11,6 @@ data:
   NIMBUS_NATS_URL: "nats://nats.{{ .Values.namespace }}.svc.cluster.local:4222"
   NIMBUS_STORAGE_NODES: {{ .Values.env.NIMBUS_STORAGE_NODES | quote }}
   NIMBUS_ORG_QUOTA_BYTES: {{ .Values.env.NIMBUS_ORG_QUOTA_BYTES | quote }}
+  # Tempo (roadmap #14) — deploy/k8s/infra/tempo.yaml, not this chart (same
+  # "stateful/shared infra lives in ../infra" split as Postgres/Redis/NATS).
+  NIMBUS_OTEL_EXPORTER_ENDPOINT: "tempo.{{ .Values.namespace }}.svc.cluster.local:4318"

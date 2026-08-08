@@ -10,11 +10,44 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel/codes"
+
 	"nimbus/internal/activity"
 	"nimbus/internal/events"
 	"nimbus/internal/file"
+	"nimbus/internal/platform/tracing"
 	"nimbus/internal/storage"
 )
+
+var tracer = tracing.Tracer("nimbus/internal/processing")
+
+// traced and tracedValue wrap fn in a child span named name — the
+// events.Subscribe-started "process <subject>" span
+// (internal/events/consumer.go) is this package's only caller, so every
+// span here nests under it, giving the upload-complete → thumbnail-generated
+// trace roadmap #14 asked for real internal structure (reassemble / generate
+// / store as separate, timed child spans) instead of one opaque span.
+func traced(ctx context.Context, name string, fn func(context.Context) error) error {
+	ctx, span := tracer.Start(ctx, name)
+	defer span.End()
+	if err := fn(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	return nil
+}
+
+func tracedValue[T any](ctx context.Context, name string, fn func(context.Context) (T, error)) (T, error) {
+	ctx, span := tracer.Start(ctx, name)
+	defer span.End()
+	v, err := fn(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return v, err
+}
 
 type Processor struct {
 	files       *file.Repository
@@ -43,11 +76,15 @@ func (p *Processor) Process(ctx context.Context, evt events.UploadCompleted) err
 	var thumb []byte
 	switch {
 	case strings.HasPrefix(version.MimeType, "image/"):
-		data, err := p.reassemble(ctx, evt.VersionID)
+		data, err := tracedValue(ctx, "reassemble_chunks", func(ctx context.Context) ([]byte, error) {
+			return p.reassemble(ctx, evt.VersionID)
+		})
 		if err != nil {
 			return fmt.Errorf("reassemble chunks: %w", err)
 		}
-		thumb, err = generateImageThumbnail(data)
+		thumb, err = tracedValue(ctx, "generate_thumbnail", func(context.Context) ([]byte, error) {
+			return generateImageThumbnail(data)
+		})
 		if err != nil {
 			// A corrupt or unsupported-subformat image will never succeed
 			// on redelivery — log and skip rather than retry forever.
@@ -55,11 +92,15 @@ func (p *Processor) Process(ctx context.Context, evt events.UploadCompleted) err
 			return nil
 		}
 	case version.MimeType == "application/pdf":
-		data, err := p.reassemble(ctx, evt.VersionID)
+		data, err := tracedValue(ctx, "reassemble_chunks", func(ctx context.Context) ([]byte, error) {
+			return p.reassemble(ctx, evt.VersionID)
+		})
 		if err != nil {
 			return fmt.Errorf("reassemble chunks: %w", err)
 		}
-		thumb, err = generatePDFThumbnail(data)
+		thumb, err = tracedValue(ctx, "generate_thumbnail", func(context.Context) ([]byte, error) {
+			return generatePDFThumbnail(data)
+		})
 		if err != nil {
 			// A PDF pdfium can't parse won't succeed on redelivery either —
 			// fall back to the placeholder rather than retry or skip, so the
@@ -79,7 +120,9 @@ func (p *Processor) Process(ctx context.Context, evt events.UploadCompleted) err
 	if err != nil {
 		return fmt.Errorf("resolve thumbnail storage node: %w", err)
 	}
-	if err := p.router.PutObject(ctx, nodeIDs[0], key, thumb, "image/jpeg"); err != nil {
+	if err := traced(ctx, "store_thumbnail", func(ctx context.Context) error {
+		return p.router.PutObject(ctx, nodeIDs[0], key, thumb, "image/jpeg")
+	}); err != nil {
 		return fmt.Errorf("store thumbnail: %w", err)
 	}
 

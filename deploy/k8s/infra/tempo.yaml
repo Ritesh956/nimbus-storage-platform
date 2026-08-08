@@ -1,0 +1,61 @@
+# Config ConfigMap is generated from deploy/observability/tempo.yaml by
+# apply.sh (kubectl create configmap --from-file), same one-source-of-truth
+# pattern prometheus.yaml/grafana.yaml already use. No PVC (unlike Compose's
+# own tempo-data volume) — same rationale as nats.yaml's ephemeral storage:
+# traces are demo/debugging data, not something a kind cluster restart
+# needs to preserve, so it's not worth the extra PVC wiring Postgres/MinIO's
+# actual data genuinely needs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: nimbus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.9.0
+          args: ["-config.file=/etc/tempo.yaml"]
+          ports:
+            - name: http
+              containerPort: 3200
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo.yaml
+              subPath: tempo.yaml
+            - name: data
+              mountPath: /var/tempo
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: nimbus
+spec:
+  selector:
+    app: tempo
+  ports:
+    - name: http
+      port: 3200
+    - name: otlp-grpc
+      port: 4317
+    - name: otlp-http
+      port: 4318

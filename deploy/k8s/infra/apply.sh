@@ -37,7 +37,11 @@ kubectl -n "$NS" create configmap grafana-dashboards \
   --from-file="$OBS/grafana/dashboards" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl apply -n "$NS" -f "$DIR_WIN/postgres.yaml" -f "$DIR_WIN/redis.yaml" -f "$DIR_WIN/nats.yaml" -f "$DIR_WIN/minio.yaml" -f "$DIR_WIN/prometheus.yaml" -f "$DIR_WIN/grafana.yaml"
+kubectl -n "$NS" create configmap tempo-config \
+  --from-file=tempo.yaml="$OBS/tempo.yaml" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl apply -n "$NS" -f "$DIR_WIN/postgres.yaml" -f "$DIR_WIN/redis.yaml" -f "$DIR_WIN/nats.yaml" -f "$DIR_WIN/minio.yaml" -f "$DIR_WIN/prometheus.yaml" -f "$DIR_WIN/grafana.yaml" -f "$DIR_WIN/tempo.yaml"
 
 echo "Waiting for stateful infra to be ready..."
 kubectl -n "$NS" rollout status statefulset/postgres --timeout=120s
@@ -47,5 +51,9 @@ kubectl -n "$NS" rollout status statefulset/minio-node-3 --timeout=120s
 kubectl -n "$NS" rollout status deployment/redis --timeout=60s
 kubectl -n "$NS" rollout status deployment/nats --timeout=60s
 kubectl -n "$NS" rollout status deployment/prometheus --timeout=60s
+# Tempo before Grafana — Grafana's Tempo datasource doesn't block
+# provisioning if Tempo isn't up yet, but waiting here keeps this script's
+# own ordering honest about the real dependency.
+kubectl -n "$NS" rollout status deployment/tempo --timeout=60s
 kubectl -n "$NS" rollout status deployment/grafana --timeout=60s
 echo "Infra ready. Now: helm install nimbus deploy/k8s/helm/nimbus -n nimbus"

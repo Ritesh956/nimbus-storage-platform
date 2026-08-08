@@ -109,35 +109,43 @@ type Config struct {
 	StorageNodes   []StorageNode
 	MinIOAccessKey string
 	MinIOSecretKey string
+
+	// OTelExporterEndpoint is Grafana Tempo's OTLP/HTTP receiver
+	// (roadmap #14 — bare host:port, e.g. "tempo:4318"). Empty disables
+	// distributed tracing entirely (tracing.Setup installs nothing further,
+	// leaving the SDK's own no-op provider in place) — same
+	// optional-external-dependency shape as SMTPAddr above.
+	OTelExporterEndpoint string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Env:                 getEnv("NIMBUS_ENV", "dev"),
-		HTTPPort:            getEnv("NIMBUS_HTTP_PORT", "8080"),
-		CORSOrigin:          getEnv("NIMBUS_CORS_ORIGIN", "*"),
-		PostgresDSN:         os.Getenv("NIMBUS_POSTGRES_DSN"),
-		RedisAddr:           getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
-		NATSURL:             getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
-		JWTSecret:           os.Getenv("NIMBUS_JWT_SECRET"),
-		JWTSecretPrevious:   os.Getenv("NIMBUS_JWT_SECRET_PREVIOUS"),
-		SMTPAddr:            os.Getenv("NIMBUS_SMTP_ADDR"),
-		SMTPFrom:            getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
-		WebBaseURL:          getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
-		MinIOAccessKey:      os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
-		MinIOSecretKey:      os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
-		AdminEmail:          strings.ToLower(strings.TrimSpace(os.Getenv("NIMBUS_ADMIN_EMAIL"))),
-		AdminPassword:       os.Getenv("NIMBUS_ADMIN_PASSWORD"),
-		TrashRetentionDays:  30,
-		ChunkSizeBytes:      8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
-		ReplicationFactor:   2,
-		WriteQuorum:         2,
-		MaxUploadBytes:      100 * 1024 * 1024,       // 100 MiB per file
-		OrgQuotaBytes:       10 * 1024 * 1024 * 1024, // 10 GiB per org
-		RateLimitRPS:        25,
-		RateLimitBurst:      50,
-		LoginRateLimitRPS:   1,
-		LoginRateLimitBurst: 5,
+		Env:                  getEnv("NIMBUS_ENV", "dev"),
+		HTTPPort:             getEnv("NIMBUS_HTTP_PORT", "8080"),
+		CORSOrigin:           getEnv("NIMBUS_CORS_ORIGIN", "*"),
+		PostgresDSN:          os.Getenv("NIMBUS_POSTGRES_DSN"),
+		RedisAddr:            getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
+		NATSURL:              getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
+		JWTSecret:            os.Getenv("NIMBUS_JWT_SECRET"),
+		JWTSecretPrevious:    os.Getenv("NIMBUS_JWT_SECRET_PREVIOUS"),
+		SMTPAddr:             os.Getenv("NIMBUS_SMTP_ADDR"),
+		SMTPFrom:             getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
+		WebBaseURL:           getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
+		MinIOAccessKey:       os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
+		MinIOSecretKey:       os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
+		AdminEmail:           strings.ToLower(strings.TrimSpace(os.Getenv("NIMBUS_ADMIN_EMAIL"))),
+		AdminPassword:        os.Getenv("NIMBUS_ADMIN_PASSWORD"),
+		OTelExporterEndpoint: os.Getenv("NIMBUS_OTEL_EXPORTER_ENDPOINT"),
+		TrashRetentionDays:   30,
+		ChunkSizeBytes:       8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
+		ReplicationFactor:    2,
+		WriteQuorum:          2,
+		MaxUploadBytes:       100 * 1024 * 1024,       // 100 MiB per file
+		OrgQuotaBytes:        10 * 1024 * 1024 * 1024, // 10 GiB per org
+		RateLimitRPS:         25,
+		RateLimitBurst:       50,
+		LoginRateLimitRPS:    1,
+		LoginRateLimitBurst:  5,
 	}
 
 	var err error

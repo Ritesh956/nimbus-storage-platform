@@ -65,6 +65,17 @@ services:
     image: axllent/mailpit:v1.30.6
     ports: ["8025:8025", "1025:1025"]
 
+  # Trace backend for the OpenTelemetry spans nimbus-api/nimbus-worker emit
+  # (roadmap #14, internal/platform/tracing) — queried by Grafana's Tempo
+  # datasource below, same instance the existing dashboards live in.
+  tempo:
+    image: grafana/tempo:2.9.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml
+      - tempo-data:/var/tempo
+    ports: ["3200:3200", "4317:4317", "4318:4318"]
+
   migrate:
     image: migrate/migrate:v4.17.1
     volumes: ["../backend/migrations:/migrations"]
@@ -86,6 +97,7 @@ services:
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
       NIMBUS_SMTP_ADDR: mailpit:1025
+      NIMBUS_OTEL_EXPORTER_ENDPOINT: tempo:4318
       # NIMBUS_ADMIN_EMAIL / NIMBUS_ADMIN_PASSWORD (the sole seeded
       # platform-admin login, see auth.Repository.EnsureSeededAdmin) come
       # from .env, not here — they're real credentials, not fixed infra.
@@ -95,6 +107,7 @@ services:
       redis: { condition: service_healthy }
       nats: { condition: service_started }
       migrate: { condition: service_completed_successfully }
+      tempo: { condition: service_started }
 
   nimbus-worker:
     build:
@@ -108,10 +121,12 @@ services:
       NIMBUS_STORAGE_NODES: ${NIMBUS_STORAGE_NODES:-node-1=http://minio-node-1:9000|http://localhost:9000,node-2=http://minio-node-2:9000|http://localhost:9010,node-3=http://minio-node-3:9000|http://localhost:9020}
       NIMBUS_MINIO_ACCESS_KEY: nimbus
       NIMBUS_MINIO_SECRET_KEY: nimbus-secret
+      NIMBUS_OTEL_EXPORTER_ENDPOINT: tempo:4318
     depends_on:
       postgres: { condition: service_healthy }
       nats: { condition: service_started }
       migrate: { condition: service_completed_successfully }
+      tempo: { condition: service_started }
 
   nimbus-web:
     build:
@@ -155,10 +170,11 @@ services:
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning
       - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/nimbus
-    depends_on: [prometheus, mailpit]
+    depends_on: [prometheus, mailpit, tempo]
 
 volumes:
   pgdata:
   minio1:
   minio2:
   minio3:
+  tempo-data:

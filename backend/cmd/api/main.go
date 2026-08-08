@@ -35,6 +35,7 @@ import (
 	"nimbus/internal/platform/logging"
 	"nimbus/internal/platform/mail"
 	"nimbus/internal/platform/ratelimit"
+	"nimbus/internal/platform/tracing"
 	"nimbus/internal/sharing"
 )
 
@@ -57,6 +58,18 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := tracing.Setup(ctx, "nimbus-api", cfg.OTelExporterEndpoint)
+	if err != nil {
+		return fmt.Errorf("tracing setup: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			logger.Warn("tracing shutdown", "error", err)
+		}
+	}()
 
 	pg, err := db.NewPostgres(ctx, cfg.PostgresDSN)
 	if err != nil {
@@ -144,6 +157,11 @@ func run() error {
 	middlewares := []func(http.Handler) http.Handler{
 		httpserver.CORS(cfg.CORSOrigin), // outermost: must short-circuit OPTIONS preflight before mux routing
 		httpserver.RequestID,
+		// Tracing wraps Recoverer (not the reverse) so a recovered panic's
+		// 500 status still lands on the span's http.status_code attribute
+		// instead of the span ending before that attribute is set — see
+		// httpserver.Tracing's own doc comment.
+		httpserver.Tracing(mux),
 		httpserver.Recoverer(logger),
 		httpserver.RequestLogger(logger),
 		httpserver.Metrics(mux),

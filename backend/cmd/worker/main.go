@@ -28,6 +28,7 @@ import (
 	"nimbus/internal/platform/httpserver"
 	"nimbus/internal/platform/logging"
 	"nimbus/internal/platform/metrics"
+	"nimbus/internal/platform/tracing"
 	"nimbus/internal/processing"
 	"nimbus/internal/storage"
 )
@@ -57,6 +58,18 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := tracing.Setup(ctx, "nimbus-worker", cfg.OTelExporterEndpoint)
+	if err != nil {
+		return fmt.Errorf("tracing setup: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			logger.Warn("tracing shutdown", "error", err)
+		}
+	}()
 
 	pg, err := db.NewPostgres(ctx, cfg.PostgresDSN)
 	if err != nil {

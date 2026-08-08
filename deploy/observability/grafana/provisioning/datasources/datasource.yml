@@ -8,3 +8,16 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+  # Roadmap #14 — traces from internal/platform/tracing, shipped to Tempo
+  # via OTLP by nimbus-api/nimbus-worker. tracesToMetrics/exemplars point
+  # back at the same Prometheus datasource above so a trace and its
+  # request's own histogram bucket are one click apart in Grafana.
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToMetrics:
+        datasourceUid: prometheus

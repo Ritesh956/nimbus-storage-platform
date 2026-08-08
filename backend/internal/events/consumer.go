@@ -7,6 +7,10 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"nimbus/internal/platform/tracing"
 )
 
 const (
@@ -40,13 +44,31 @@ func Subscribe(ctx context.Context, js jetstream.JetStream, dead *Repository, ha
 		return nil, err
 	}
 
+	tracer := tracing.Tracer("nimbus/internal/events")
 	_, err = cons.Consume(func(msg jetstream.Msg) {
 		var evt UploadCompleted
 		if err := json.Unmarshal(msg.Data(), &evt); err != nil {
 			_ = msg.Term() // malformed payload will never succeed on redelivery — terminate rather than retry
 			return
 		}
-		if err := handler(ctx, evt); err != nil {
+
+		// Extracts the publishing request's trace context from the message
+		// headers (Publisher.PublishUploadCompleted injected it) — this span
+		// joins that trace instead of starting an unrelated one, so
+		// "upload-complete → thumbnail-generated" shows up as one trace in
+		// Tempo, not two disconnected ones either side of the NATS hop
+		// (roadmap #14, the audit's own suggested minimum scope). ctx (not a
+		// per-message derivative) still governs cancellation, matching the
+		// pre-existing handler(ctx, evt) call this replaces.
+		msgCtx := tracing.Propagator().Extract(ctx, headerCarrier(msg.Headers()))
+		msgCtx, span := tracer.Start(msgCtx, "process "+msg.Subject(), trace.WithSpanKind(trace.SpanKindConsumer))
+		err := handler(msgCtx, evt)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+		if err != nil {
 			if md, mdErr := msg.Metadata(); mdErr == nil && md.NumDelivered >= maxDeliver {
 				// Final attempt failed — dead-letter and stop redelivery. If
 				// the insert itself fails there's nothing left to do but log:
