@@ -22,7 +22,9 @@ jobs:
       - name: build
         run: go build ./...
       - name: unit test
-        run: go test ./... -short
+        run: go test ./... -short -coverprofile=/tmp/unit.cov -coverpkg=./...
+      - name: unit coverage summary
+        run: go tool cover -func=/tmp/unit.cov | tail -1
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck
@@ -63,6 +65,13 @@ jobs:
         run: npm audit --audit-level=high
       - name: lint
         run: npm run lint
+      # Audit §14/§10: closes the "zero frontend tests" gap — Vitest +
+      # React Testing Library, covering format.ts/sha256-stream.ts (verified
+      # against Node's real crypto as an oracle)/upload.ts's resume state
+      # machine plus EmptyState/ConfirmDialog component behavior. `test`
+      # (not `test:watch`) runs once and exits, which is what CI needs.
+      - name: test
+        run: npm test
       # Roadmap #11's other half: frontend/lib/types.ts is now a thin
       # re-export over lib/api-schema.generated.ts (see that file's header)
       # instead of a hand-maintained mirror of the Go response shapes —
@@ -79,9 +88,12 @@ jobs:
       - name: build
         run: npm run build
 
-  # Integration tests need real Postgres/Redis, not mocks — matching this
-  # project's "verify against the real thing" convention (see CLAUDE.md).
-  # Deliberately does NOT include scripts/chaos-node-kill.js or
+  # Integration tests need real Postgres/Redis/MinIO/NATS, not mocks —
+  # matching this project's "verify against the real thing" convention (see
+  # CLAUDE.md). MinIO/NATS were added alongside the gc/events/sharing/org/
+  # folder/file/search/quota test suites (audit §14) so those modules'
+  # correctness claims are re-proved on every push, not just by manual smoke
+  # scripts. Deliberately does NOT include scripts/chaos-node-kill.js or
   # scripts/load-upload.js: both need real multi-container infra (Compose
   # or kind) and real wall-clock time (the load test alone runs ~40s at 60
   # VUs), a different cost/value trade-off than a per-push CI gate. They
@@ -125,12 +137,38 @@ jobs:
           -path /migrations
           -database "postgres://nimbus:nimbus@localhost:5432/nimbus?sslmode=disable"
           up
+      # gc and events integration tests need a real chunk store / broker, not
+      # mocks (same "verify against the real thing" convention as
+      # Postgres/Redis above) — single node/instance is enough, the
+      # ring/replication behavior itself is already covered by
+      # storage.ring_test.go. Run as plain `docker run -d`, not a `services:`
+      # entry: GitHub Actions' services block has no way to pass the command
+      # args both images need (`server /data`, `-js`) — same reason the
+      # migration step above is a raw `docker run` rather than a service.
+      - name: start minio
+        run: >-
+          docker run -d --network host --name test-minio
+          -e MINIO_ROOT_USER=nimbus -e MINIO_ROOT_PASSWORD=nimbus-secret
+          minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address :9001
+      - name: start nats
+        run: docker run -d --network host --name test-nats nats:2-alpine -js -m 8222
+      - name: wait for minio and nats
+        run: |
+          for i in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live && break; [ "$i" = 20 ] && { echo "minio never came up"; docker logs test-minio; exit 1; }; sleep 1; done
+          for i in $(seq 1 20); do curl -sf http://localhost:8222/healthz && break; [ "$i" = 20 ] && { echo "nats never came up"; docker logs test-nats; exit 1; }; sleep 1; done
       - name: integration test
         working-directory: backend
         env:
           NIMBUS_TEST_POSTGRES_DSN: postgres://nimbus:nimbus@localhost:5432/nimbus?sslmode=disable
           NIMBUS_TEST_REDIS_ADDR: localhost:6379
-        run: go test -tags=integration ./...
+          NIMBUS_TEST_MINIO_ENDPOINT: localhost:9000
+          NIMBUS_TEST_MINIO_ACCESS_KEY: nimbus
+          NIMBUS_TEST_MINIO_SECRET_KEY: nimbus-secret
+          NIMBUS_TEST_NATS_URL: nats://localhost:4222
+        run: go test -tags=integration -coverprofile=/tmp/integration.cov -coverpkg=./... ./...
+      - name: integration coverage summary
+        working-directory: backend
+        run: go tool cover -func=/tmp/integration.cov | tail -1
 
   docker-build:
     runs-on: ubuntu-latest
