@@ -39,7 +39,9 @@ export default function SharePage() {
         </div>
         {error && (
           <Card className="p-8 text-center">
-            <p className="text-sm text-danger">{error}</p>
+            <p role="alert" className="text-sm text-danger">
+              {error}
+            </p>
           </Card>
         )}
         {!error && !resolved && (
@@ -162,7 +164,11 @@ function SharedFileRow({ token, file }: { token: string; file: ShareFileInfo }) 
         <span className="block truncate text-sm">{file.name}</span>
         <span className="block text-[11px] text-muted-2">
           {formatBytes(file.size_bytes)}
-          {error && <span className="ml-2 text-danger">{error}</span>}
+          {error && (
+            <span role="alert" className="ml-2 text-danger">
+              {error}
+            </span>
+          )}
         </span>
       </span>
       <Button variant="secondary" className="shrink-0" disabled={busy} onClick={download}>
@@ -209,7 +215,11 @@ function Bundle({ token, files }: { token: string; files: ShareFileInfo[] }) {
           </Button>
         )}
       </div>
-      {error && <p className="px-5 py-3 text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="px-5 py-3 text-xs text-danger">
+          {error}
+        </p>
+      )}
       <ul>
         {files.length === 0 && <li className="px-5 py-6 text-center text-xs text-muted-2">Nothing shareable remains in this bundle.</li>}
         {files.map((f) => (
@@ -297,7 +307,11 @@ function FolderBrowser({
           {zipped !== null ? `Zipping… (${zipped})` : "Download folder"}
         </Button>
       </div>
-      {error && <p className="px-5 py-3 text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="px-5 py-3 text-xs text-danger">
+          {error}
+        </p>
+      )}
       {loading && <p className="px-5 py-3 text-xs text-muted-2">Loading…</p>}
       <ul>
         {folders.map((f) => (

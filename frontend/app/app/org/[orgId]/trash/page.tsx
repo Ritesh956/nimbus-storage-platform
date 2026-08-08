@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FolderIcon, FileIcon, RestoreIcon, TrashIcon } from "@/components/ui/Icons";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function TrashPage() {
   const { orgId } = useParams<{ orgId: string }>();
@@ -22,7 +23,11 @@ export default function TrashPage() {
       <div className="panel overflow-hidden">
         <div className="border-b border-border/60 px-5 py-3.5 text-sm font-medium">Folders</div>
         {folders?.length === 0 ? (
-          <p className="px-5 py-6 text-center text-xs text-muted-2">Nothing here.</p>
+          <EmptyState
+            icon={<FolderIcon size={18} />}
+            title="No trashed folders"
+            description="Folders you delete show up here until you restore or purge them."
+          />
         ) : (
           <ul>
             {folders?.map((f) => (
@@ -53,7 +58,11 @@ export default function TrashPage() {
       <div className="panel overflow-hidden">
         <div className="border-b border-border/60 px-5 py-3.5 text-sm font-medium">Files</div>
         {files?.length === 0 ? (
-          <p className="px-5 py-6 text-center text-xs text-muted-2">Nothing here.</p>
+          <EmptyState
+            icon={<TrashIcon size={18} />}
+            title="No trashed files"
+            description="Files you delete show up here until you restore or delete them forever."
+          />
         ) : (
           <ul>
             {files?.map((f) => (

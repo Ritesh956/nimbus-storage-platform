@@ -95,6 +95,7 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
           {!link && (
             <div className="flex items-center gap-2">
               <select
+                aria-label="Link expiry"
                 value={expiry}
                 onChange={(e) => setExpiry(e.target.value as keyof typeof expiryOptions)}
                 className="glow-ring flex-1 rounded-lg border border-border bg-surface-deep px-2 py-2 text-xs text-muted focus:border-accent"
@@ -114,7 +115,12 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
 
           {link && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent-soft px-3 py-2">
-              <input readOnly value={link.url} className="min-w-0 flex-1 truncate bg-transparent text-xs text-muted" />
+              <input
+                readOnly
+                aria-label="Share link"
+                value={link.url}
+                className="min-w-0 flex-1 truncate bg-transparent text-xs text-muted"
+              />
               <span className="shrink-0 text-[11px] text-muted-2">
                 {link.expiresAt ? `expires ${formatDate(link.expiresAt)}` : "never expires"}
               </span>
@@ -143,7 +149,11 @@ export function ShareDialog({ target, onClose }: { target: Target; onClose: () =
             </div>
           )}
 
-          {error && <p className="text-xs text-danger">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-danger">
+              {error}
+            </p>
+          )}
 
           <div className="flex justify-end">
             <Button variant="secondary" onClick={onClose}>

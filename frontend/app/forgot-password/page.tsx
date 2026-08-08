@@ -46,15 +46,18 @@ export default function ForgotPasswordPage() {
           {sent ? (
             // The backend answers identically for unknown emails (no user
             // enumeration), so this is worded as "if an account exists".
-            <p className="text-sm leading-relaxed text-muted">
+            <p role="status" className="text-sm leading-relaxed text-muted">
               If an account exists for <span className="font-medium text-foreground">{email}</span>, a reset
               link is on its way. The link expires in 1 hour.
             </p>
           ) : (
             <form onSubmit={onSubmit} className="flex flex-col gap-4">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted">Email</label>
+                <label htmlFor="forgot-email" className="mb-1.5 block text-xs font-medium text-muted">
+                  Email
+                </label>
                 <Input
+                  id="forgot-email"
                   type="email"
                   required
                   autoFocus
@@ -63,7 +66,11 @@ export default function ForgotPasswordPage() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
-              {error && <p className="text-xs text-danger">{error}</p>}
+              {error && (
+                <p role="alert" className="text-xs text-danger">
+                  {error}
+                </p>
+              )}
               <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">
                 {loading ? "Sending…" : "Send reset link"}
               </Button>

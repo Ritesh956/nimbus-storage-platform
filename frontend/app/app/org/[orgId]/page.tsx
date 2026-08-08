@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { FolderIcon } from "@/components/ui/Icons";
 
 export default function OrgHome() {
   const { orgId } = useParams<{ orgId: string }>();
@@ -30,13 +32,18 @@ export default function OrgHome() {
   return (
     <div className="mx-auto max-w-sm">
       <Card>
-        <h2 className="mb-1 text-base font-semibold">No folders yet</h2>
-        <p className="mb-4 text-xs text-muted">Create your first folder to get started.</p>
-        <CreateFolderForm
-          onCreate={async (name) => {
-            await api.folders.create(orgId, name, null);
-            await mutate();
-          }}
+        <EmptyState
+          icon={<FolderIcon size={18} />}
+          title="Welcome to your new org"
+          description="You don't have any folders yet — create the first one to start uploading files."
+          action={
+            <CreateFolderForm
+              onCreate={async (name) => {
+                await api.folders.create(orgId, name, null);
+                await mutate();
+              }}
+            />
+          }
         />
       </Card>
     </div>
@@ -64,11 +71,21 @@ function CreateFolderForm({ onCreate }: { onCreate: (name: string) => Promise<vo
 
   return (
     <form onSubmit={submit} className="flex gap-2">
-      <Input placeholder="Folder name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <Input
+        aria-label="Folder name"
+        placeholder="Folder name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+      />
       <Button type="submit" disabled={busy}>
         Create
       </Button>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

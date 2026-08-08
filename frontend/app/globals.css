@@ -14,6 +14,14 @@
   --foreground: #ffffff; /* Neutral 100 */
   --muted: #aeb9e1; /* Neutral 400 — secondary text */
   --muted-2: #7e89ac; /* Neutral 500 — tertiary text, labels */
+  /* WCAG AA contrast audit (2026-08-08, roadmap #15): --muted and --muted-2
+     are used as body text at 11-14px, which needs >=4.5:1 against whatever
+     surface it sits on. Checked against every surface it actually appears
+     on (--background/--surface/--surface-deep/--surface-2): --muted is
+     8.5-9.7:1 everywhere; --muted-2's worst case is 4.77:1 on --surface-2
+     (its best case is 5.44:1 on --background). Both pass AA with margin —
+     no color change needed. Re-run this check before darkening either
+     token or introducing a new surface shade. */
   --accent: #cb3cff; /* Primary Color 1 */
   --accent-strong: #7f25fb;
   --accent-soft: rgba(203, 60, 255, 0.12);
@@ -67,6 +75,38 @@ body {
 .glow-ring:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Visually hidden until keyboard-focused — used by the skip-to-content
+   link (WCAG 2.4.1). Not `sr-only`-forever: it must become visible on
+   focus so sighted keyboard users can see where they landed. */
+.skip-link {
+  position: absolute;
+  top: -1000px;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  border-radius: 0 0 8px 8px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* WCAG 2.3.3 / user preference: cut motion for anyone who's asked the OS
+   to reduce it, rather than only respecting it on a handful of components. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 ::selection {

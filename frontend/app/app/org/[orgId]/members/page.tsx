@@ -129,11 +129,13 @@ export default function MembersPage() {
           <Input
             type="email"
             required
+            aria-label="Teammate email"
             placeholder="teammate@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
           <select
+            aria-label="Role"
             value={role}
             onChange={(e) => setRole(e.target.value as OrgRole)}
             className="glow-ring rounded-lg border border-border bg-surface-deep px-3 py-2 text-sm text-foreground focus:border-accent"
@@ -150,7 +152,11 @@ export default function MembersPage() {
           </Button>
         </form>
       )}
-      {error && <p className="-mt-2 text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="-mt-2 text-xs text-danger">
+          {error}
+        </p>
+      )}
 
       <TablePanel title={members ? `${members.length} member${members.length === 1 ? "" : "s"}` : "Members"}>
         <thead>

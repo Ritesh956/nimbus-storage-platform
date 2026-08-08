@@ -181,7 +181,11 @@ export default function AdminPage() {
           )}
         </tbody>
       </TablePanel>
-      {dlqError && <p className="-mt-3 text-xs text-danger">{dlqError}</p>}
+      {dlqError && (
+        <p role="alert" className="-mt-3 text-xs text-danger">
+          {dlqError}
+        </p>
+      )}
     </div>
   );
 }

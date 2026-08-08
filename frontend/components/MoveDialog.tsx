@@ -106,7 +106,13 @@ export function MoveDialog({ orgId, item, onClose, onMoved }: Props) {
         </ul>
 
         <div className="flex items-center justify-between gap-3 border-t border-border/60 px-5 py-3.5">
-          {error ? <p className="min-w-0 truncate text-xs text-danger">{error}</p> : <span />}
+          {error ? (
+            <p role="alert" className="min-w-0 truncate text-xs text-danger">
+              {error}
+            </p>
+          ) : (
+            <span />
+          )}
           <div className="flex shrink-0 gap-2">
             <Button variant="secondary" onClick={onClose}>
               Cancel

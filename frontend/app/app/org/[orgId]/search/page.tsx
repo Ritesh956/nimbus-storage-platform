@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { FileIcon, SearchIcon, ChevronDownIcon } from "@/components/ui/Icons";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { formatBytes, formatDate } from "@/lib/format";
 import type { SearchResult } from "@/lib/types";
 
@@ -118,6 +119,7 @@ export default function SearchPage() {
           <div className="relative flex-1">
             <SearchIcon size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-2" />
             <Input
+              aria-label="Search files"
               placeholder="Search files…"
               value={filters.q}
               onChange={(e) => setFilters({ ...filters, q: e.target.value })}
@@ -230,7 +232,11 @@ export default function SearchPage() {
           </div>
         )}
       </form>
-      {error && <p className="text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
 
       {results && (
         <div className="panel overflow-hidden">
@@ -238,7 +244,15 @@ export default function SearchPage() {
             Results <span className="ml-1 text-xs font-normal text-muted-2">{results.length}{nextCursor ? "+" : ""}</span>
           </div>
           {results.length === 0 ? (
-            <p className="px-5 py-6 text-center text-xs text-muted-2">No results.</p>
+            <EmptyState
+              icon={<SearchIcon size={18} />}
+              title="No results"
+              description={
+                chips.length > 0
+                  ? "Nothing matches this search and filter combination — try clearing a filter or broadening your search term."
+                  : "Nothing matches that search term — check the spelling, or try a shorter query."
+              }
+            />
           ) : (
             <ul>
               {results.map((r) => (

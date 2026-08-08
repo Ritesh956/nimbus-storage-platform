@@ -137,6 +137,7 @@ export default function SecurityPage() {
               </div>
               <form onSubmit={confirm} className="mt-3 flex items-center gap-2">
                 <Input
+                  aria-label="6-digit authentication code to confirm enrollment"
                   required
                   autoFocus
                   inputMode="numeric"
@@ -167,6 +168,7 @@ export default function SecurityPage() {
               Enter a current code to confirm turning 2FA off:
             </span>
             <Input
+              aria-label="6-digit authentication code to confirm disabling 2FA"
               required
               autoFocus
               inputMode="numeric"
@@ -186,7 +188,11 @@ export default function SecurityPage() {
           </form>
         )}
 
-        {error && <p className="mt-3 text-xs text-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-3 text-xs text-danger">
+            {error}
+          </p>
+        )}
       </Card>
     </div>
   );

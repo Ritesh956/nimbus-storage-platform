@@ -56,7 +56,11 @@ export function ConfirmDialog({ title, body, confirmLabel, onCancel, onConfirm }
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-4">
-          {error && <p className="mr-auto min-w-0 truncate text-xs text-danger">{error}</p>}
+          {error && (
+            <p role="alert" className="mr-auto min-w-0 truncate text-xs text-danger">
+              {error}
+            </p>
+          )}
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>

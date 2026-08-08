@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { FileIcon, FolderIcon, LinkIcon, PlusIcon, TrashIcon } from "@/components/ui/Icons";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function FolderPage() {
   const { orgId, folderId } = useParams<{ orgId: string; folderId: string }>();
@@ -126,6 +127,7 @@ export default function FolderPage() {
       {showNewFolder && (
         <form onSubmit={createFolder} className="-mt-3 flex gap-2">
           <Input
+            aria-label="Folder name"
             autoFocus
             placeholder="Folder name"
             value={newFolderName}
@@ -137,7 +139,11 @@ export default function FolderPage() {
           </Button>
         </form>
       )}
-      {error && <p className="-mt-3 text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="-mt-3 text-xs text-danger">
+          {error}
+        </p>
+      )}
 
       <UploadDropzone folderId={folderId} onUploaded={() => mutate()} />
 
@@ -214,12 +220,11 @@ export default function FolderPage() {
             </span>
           </div>
           {data.files.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 px-5 py-10 text-center">
-              <span className="grid size-10 place-items-center rounded-xl bg-surface-deep text-muted-2">
-                <FileIcon size={18} />
-              </span>
-              <p className="text-xs text-muted-2">No files here yet — drop one above.</p>
-            </div>
+            <EmptyState
+              icon={<FileIcon size={18} />}
+              title="No files here yet"
+              description="Drop one on the dropzone above, or drag it in from your desktop."
+            />
           ) : (
             <ul>
               {data.files.map((f) => (

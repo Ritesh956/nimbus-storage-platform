@@ -80,8 +80,11 @@ export default function LoginPage() {
           {challenge ? (
             <form onSubmit={onSubmitCode} className="flex flex-col gap-4">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted">Authentication code</label>
+                <label htmlFor="totp-code" className="mb-1.5 block text-xs font-medium text-muted">
+                  Authentication code
+                </label>
                 <Input
+                  id="totp-code"
                   required
                   autoFocus
                   inputMode="numeric"
@@ -94,7 +97,11 @@ export default function LoginPage() {
                   className="text-center text-lg tracking-[0.4em]"
                 />
               </div>
-              {error && <p className="text-xs text-danger">{error}</p>}
+              {error && (
+                <p role="alert" className="text-xs text-danger">
+                  {error}
+                </p>
+              )}
               <Button type="submit" disabled={loading || code.trim().length !== 6} className="mt-1 w-full py-2.5 text-sm">
                 {loading ? "Verifying…" : "Verify"}
               </Button>
@@ -102,8 +109,11 @@ export default function LoginPage() {
           ) : (
             <form onSubmit={onSubmit} className="flex flex-col gap-4">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted">Email</label>
+                <label htmlFor="login-email" className="mb-1.5 block text-xs font-medium text-muted">
+                  Email
+                </label>
                 <Input
+                  id="login-email"
                   type="email"
                   required
                   autoFocus
@@ -114,14 +124,26 @@ export default function LoginPage() {
               </div>
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
-                  <label className="block text-xs font-medium text-muted">Password</label>
+                  <label htmlFor="login-password" className="block text-xs font-medium text-muted">
+                    Password
+                  </label>
                   <Link href="/forgot-password" className="glow-ring rounded text-[11px] text-accent hover:underline">
                     Forgot password?
                   </Link>
                 </div>
-                <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+                <Input
+                  id="login-password"
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
               </div>
-              {error && <p className="text-xs text-danger">{error}</p>}
+              {error && (
+                <p role="alert" className="text-xs text-danger">
+                  {error}
+                </p>
+              )}
               <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">
                 {loading ? "Signing in…" : "Sign in"}
               </Button>

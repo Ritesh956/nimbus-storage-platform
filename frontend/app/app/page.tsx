@@ -80,13 +80,23 @@ export default function AppHome() {
           Create an organization
         </div>
         <form onSubmit={createOrg} className="flex gap-2">
-          <Input placeholder="Acme Inc." value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input
+            aria-label="Organization name"
+            placeholder="Acme Inc."
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
           <Button type="submit" disabled={creating} className="shrink-0">
             <PlusIcon size={13} />
             {creating ? "Creating…" : "Create"}
           </Button>
         </form>
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-2 text-xs text-danger">
+            {error}
+          </p>
+        )}
       </Card>
     </div>
   );

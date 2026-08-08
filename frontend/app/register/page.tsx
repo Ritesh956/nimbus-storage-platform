@@ -53,8 +53,11 @@ export default function RegisterPage() {
         <Card className="p-6">
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted">Email</label>
+              <label htmlFor="register-email" className="mb-1.5 block text-xs font-medium text-muted">
+                Email
+              </label>
               <Input
+                id="register-email"
                 type="email"
                 required
                 autoFocus
@@ -64,29 +67,41 @@ export default function RegisterPage() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted">Password</label>
+              <label htmlFor="register-password" className="mb-1.5 block text-xs font-medium text-muted">
+                Password
+              </label>
               <Input
+                id="register-password"
                 type="password"
                 required
                 minLength={8}
+                aria-describedby="register-password-hint"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-              <p className="mt-1.5 text-[11px] text-muted-2">At least 8 characters.</p>
+              <p id="register-password-hint" className="mt-1.5 text-[11px] text-muted-2">
+                At least 8 characters.
+              </p>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted">Organization name</label>
+              <label htmlFor="register-org-name" className="mb-1.5 block text-xs font-medium text-muted">
+                Organization name
+              </label>
               <Input
+                id="register-org-name"
                 type="text"
                 maxLength={200}
                 placeholder="Acme Inc"
+                aria-describedby="register-org-hint"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
               />
-              <p className="mt-1.5 text-[11px] text-muted-2">Optional — we&apos;ll name it for you if you skip this.</p>
+              <p id="register-org-hint" className="mt-1.5 text-[11px] text-muted-2">
+                Optional — we&apos;ll name it for you if you skip this.
+              </p>
             </div>
             {error && (
-              <p className="text-xs text-danger">
+              <p role="alert" className="text-xs text-danger">
                 {accountCreated ? (
                   <>
                     Account created, but sign-in failed: {error}. Try{" "}

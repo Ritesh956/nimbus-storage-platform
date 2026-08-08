@@ -57,7 +57,7 @@ function ResetPasswordForm() {
         </div>
         <Card className="p-6">
           {done ? (
-            <p className="text-sm leading-relaxed text-muted">
+            <p role="status" className="text-sm leading-relaxed text-muted">
               Password updated. <Link href="/login" className="font-medium text-accent hover:underline">Sign in</Link>{" "}
               with your new password.
             </p>
@@ -72,18 +72,28 @@ function ResetPasswordForm() {
           ) : (
             <form onSubmit={onSubmit} className="flex flex-col gap-4">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted">New password</label>
+                <label htmlFor="reset-password-input" className="mb-1.5 block text-xs font-medium text-muted">
+                  New password
+                </label>
                 <Input
+                  id="reset-password-input"
                   type="password"
                   required
                   autoFocus
                   minLength={8}
+                  aria-describedby="reset-password-hint"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-                <p className="mt-1.5 text-[11px] text-muted-2">At least 8 characters.</p>
+                <p id="reset-password-hint" className="mt-1.5 text-[11px] text-muted-2">
+                  At least 8 characters.
+                </p>
               </div>
-              {error && <p className="text-xs text-danger">{error}</p>}
+              {error && (
+                <p role="alert" className="text-xs text-danger">
+                  {error}
+                </p>
+              )}
               <Button type="submit" disabled={loading} className="mt-1 w-full py-2.5 text-sm">
                 {loading ? "Saving…" : "Set new password"}
               </Button>

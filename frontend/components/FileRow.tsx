@@ -249,7 +249,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
       <div className="flex items-center">
         {onToggleSelect && (
           <label className="shrink-0 cursor-pointer py-3 pl-4 sm:pl-5" title="Select for sharing">
-            <Checkbox checked={selected} onChange={onToggleSelect} />
+            <Checkbox aria-label={`Select "${name}" for sharing`} checked={selected} onChange={onToggleSelect} />
           </label>
         )}
         <span className={`flex shrink-0 items-center py-3 ${onToggleSelect ? "pl-3" : "pl-4 sm:pl-5"}`}>
@@ -267,6 +267,8 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
         >
         {renaming ? (
           <input
+            aria-label="File name"
+            autoFocus
             className="glow-ring flex-1 rounded-lg border border-border bg-surface-deep px-2 py-1 text-sm"
             value={newName}
             onClick={(e) => e.stopPropagation()}
@@ -285,7 +287,11 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
 
       {open && (
         <div className="border-t border-border/40 bg-surface-deep/40 px-4 py-4 text-sm sm:px-5">
-          {error && <p className="mb-3 text-xs text-danger">{error}</p>}
+          {error && (
+            <p role="alert" className="mb-3 text-xs text-danger">
+              {error}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" disabled={busy} onClick={download}>
               <DownloadIcon size={13} />

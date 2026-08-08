@@ -46,6 +46,10 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
+      <a href="#main-content" className="skip-link glow-ring">
+        Skip to content
+      </a>
+
       {/* Desktop sidebar (≥lg) */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-border/50 px-4 py-6 lg:flex">
         <Link href="/app" className="glow-ring mb-8 flex items-center gap-2.5 rounded-lg px-2">
@@ -62,7 +66,7 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
           </div>
         )}
 
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav aria-label="Primary" className="flex flex-1 flex-col gap-1">
           {items.map((item) => {
             const active = isActive(item);
             const Icon = item.icon;
@@ -113,12 +117,15 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto focus:outline-none">
         <div className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:py-8">{children}</div>
       </main>
 
       {/* Mobile bottom tab bar (<lg) */}
-      <nav className={`fixed inset-x-0 bottom-0 z-20 grid ${items.length === 7 ? "grid-cols-7" : "grid-cols-6"} border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden`}>
+      <nav
+        aria-label="Mobile"
+        className={`fixed inset-x-0 bottom-0 z-20 grid ${items.length === 7 ? "grid-cols-7" : "grid-cols-6"} border-t border-border/60 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden`}
+      >
         {items.map((item) => {
           const active = isActive(item);
           const Icon = item.icon;
