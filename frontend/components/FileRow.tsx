@@ -9,6 +9,7 @@ import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { Checkbox } from "./ui/Checkbox";
 import { MoveDialog } from "./MoveDialog";
+import { useToast } from "./Toast";
 import {
   FolderIcon,
   FileIcon,
@@ -128,6 +129,7 @@ interface Props {
 export function FileRow({ file, orgId, folderId, onChanged, selected = false, onToggleSelect }: Props) {
   const fileId = file.id;
   const name = file.name;
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
@@ -208,6 +210,16 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
     try {
       await api.files.trash(fileId);
       onChanged();
+      showToast({
+        message: `"${name}" moved to trash`,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            await api.files.restore(fileId);
+            onChanged();
+          },
+        },
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "failed to trash file");
       setBusy(false);

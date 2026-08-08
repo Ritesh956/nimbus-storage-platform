@@ -10,6 +10,7 @@ import { UploadDropzone } from "@/components/UploadDropzone";
 import { FileRow } from "@/components/FileRow";
 import { MoveDialog } from "@/components/MoveDialog";
 import { ShareDialog } from "@/components/ShareDialog";
+import { useToast } from "@/components/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -22,6 +23,7 @@ export default function FolderPage() {
   );
   const { data: path } = useSWR(folderId ? ["path", folderId] : null, () => api.folders.path(folderId));
   const { mutate: mutateKey } = useSWRConfig();
+  const { showToast } = useToast();
   // Live updates (backlog #12): a thumbnail_generated event re-fetches both
   // the children listing (has_thumbnail flips true) and that file's cached
   // thumbnail targets, so thumbs pop in without a refresh; an uploaded
@@ -72,9 +74,19 @@ export default function FolderPage() {
     }
   }
 
-  async function trashFolder(id: string) {
+  async function trashFolder(id: string, name: string) {
     await api.folders.trash(id);
     await mutate();
+    showToast({
+      message: `"${name}" moved to trash`,
+      action: {
+        label: "Undo",
+        onClick: async () => {
+          await api.folders.restore(id);
+          await mutate();
+        },
+      },
+    });
   }
 
   return (
@@ -167,7 +179,7 @@ export default function FolderPage() {
                   <FolderIcon size={15} />
                 </button>
                 <button
-                  onClick={() => trashFolder(f.id)}
+                  onClick={() => trashFolder(f.id, f.name)}
                   title="Move to trash"
                   className="glow-ring mr-3 rounded-lg p-2 text-muted-2 transition-all hover:bg-danger/10 hover:text-danger lg:opacity-0 lg:group-hover:opacity-100"
                 >

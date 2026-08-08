@@ -149,6 +149,12 @@ export const ClockIcon = (p: IconProps) => (
   </svg>
 );
 
+export const CloseIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </svg>
+);
+
 /* Brand mark: gradient rounded square with a cloud silhouette, echoing the
    Dashdark logo treatment. */
 export function LogoMark({ size = 34 }: { size?: number }) {

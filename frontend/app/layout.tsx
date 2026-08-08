@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Mona_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
+import { ToastProvider } from "@/components/Toast";
 
 // Mona Sans is the Dashdark X reference design's typeface (variable font,
 // weights come from the file's Text Single ramp: 400/500/600).
@@ -28,7 +29,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${monaSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <AuthProvider>{children}</AuthProvider>
+        <ToastProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );
