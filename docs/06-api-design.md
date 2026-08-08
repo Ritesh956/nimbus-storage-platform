@@ -93,7 +93,7 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 | POST | `/v1/chunks/check` | `{hashes: [sha256hex...]}` | 200 `{missing: [sha256hex...]}` | global dedup check, no org scoping |
 | POST | `/v1/uploads` | `{folder_id, name, size_bytes, mime_type}` **or** `{file_id, size_bytes, mime_type}` | 201 `{upload_id}` | `file_id` form uploads a new version of an existing file instead of creating one (added Day 6); `folder_id`/`name` are derived from the target file in that case |
 | POST | `/v1/uploads/{uploadId}/chunks/{hash}/init` | — | 200 `{targets: [{node_id, put_url}], expires_at}` | N targets (replication factor, default 2) |
-| POST | `/v1/uploads/{uploadId}/chunks/{hash}/commit` | `{size_bytes, etags: {node_id: etag}}` | 200 `{status: "committed"}` | 409 if replica ETags disagree (corruption signal) |
+| POST | `/v1/uploads/{uploadId}/chunks/{hash}/commit` | `{size_bytes, etags: {node_id: etag}}` | 200 `{status: "committed"}` | 409 if replica ETags disagree (corruption signal) or if fewer than `NIMBUS_WRITE_QUORUM` etags are present (quick-wins architecture session, docs/00-project-state.md item 29); 413 if `size_bytes` exceeds `NIMBUS_CHUNK_SIZE_BYTES` |
 | POST | `/v1/uploads/{uploadId}/complete` | `{chunk_order: [hash...], size_bytes, checksum_sha256}` + `Idempotency-Key` header | 201 `{file_id, version_id}` | also (best-effort) records a `uploaded` activity event and publishes `nimbus.uploads.completed` to NATS |
 
 Resumability: a client that drops mid-upload re-calls `/chunks/check` on reconnect — already-committed chunks come back as not-missing. No separate "resume" endpoint.
@@ -134,7 +134,7 @@ A share link is scoped to exactly one of: a **file**, a **folder** (its whole su
 
 ## 9. Admin — `internal/storage`, `internal/events`
 
-All four routes below are **platform-admin gated** since the governance session (`auth.RequirePlatformAdmin`, 403 otherwise — previously any valid JWT sufficed): they're deployment-wide cluster reads (nodes, ring, DLQ across all orgs), not org data, so the check is `users.is_platform_admin` (migration 000012, set only via the single seeded admin account — `NIMBUS_ADMIN_EMAIL`/`NIMBUS_ADMIN_PASSWORD`, `auth.Repository.EnsureSeededAdmin` — promote-only, revoke is a manual UPDATE), not an org role.
+All five routes below are **platform-admin gated** since the governance session (`auth.RequirePlatformAdmin`, 403 otherwise — previously any valid JWT sufficed): they're deployment-wide cluster reads/actions (nodes, ring, repair, DLQ across all orgs), not org data, so the check is `users.is_platform_admin` (migration 000012, set only via the single seeded admin account — `NIMBUS_ADMIN_EMAIL`/`NIMBUS_ADMIN_PASSWORD`, `auth.Repository.EnsureSeededAdmin` — promote-only, revoke is a manual UPDATE), not an org role.
 
 | Method | Path | 2xx | Notes |
 |---|---|---|---|
@@ -142,8 +142,9 @@ All four routes below are **platform-admin gated** since the governance session 
 | GET | `/v1/admin/dlq` | 200 `{events: [{id, subject, payload, error, deliveries, status, created_at, retried_at?}]}` | dead-lettered NATS events (newest first, cap 100) — Tier 2 session |
 | POST | `/v1/admin/dlq/{id}/retry` | 200 `{status: "retried"}` | republishes the stored payload to its original subject; 409 if already retried |
 | GET | `/v1/admin/ring?file_id=` | 200 `{vnodes: [{position, node}], replication_factor, chunks?: [{sequence, hash, position, preference, locations}]}` | Tier 3 session (backlog #13): the live ring's vnode table (positions on the uint32 ring, same hashing placement uses). With `file_id`, adds the latest version's chunks — `preference` is today's health-ignoring ring walk, `locations` is where the bytes were actually committed; they diverge after a failover write. Rendered as the admin page's ring diagram |
+| POST | `/v1/admin/nodes/{nodeId}/repair` | 200 `{checked, restored, unrepairable}` | Architecture-gap session (audit §02): re-verifies every chunk recorded as committed on `nodeId` against what's physically there, re-copying from a surviving replica when it isn't (e.g. after a volume loss — standalone MinIO has no storage-level durability underneath Nimbus's own replication, docs/02-system-design.md §1). Manual-trigger, synchronous, not automatic on node recovery — see `internal/storage/repair.go`'s doc comment for why. A chunk with no surviving replica anywhere is left `degraded`, not silently `committed` |
 
-Per-org usage — sketched in an earlier draft of this doc as `/v1/admin/orgs/{orgId}/usage` — was **built in the governance session as `GET /v1/orgs/{orgId}/usage`** (§3): org governance is owner-gated and lives under `/v1/orgs/`, keeping this section purely cluster ops. `internal/admin` remains a reserved, empty package (see docs/08-folder-structure.md).
+Per-org usage — sketched in an earlier draft of this doc as `/v1/admin/orgs/{orgId}/usage` — was **built in the governance session as `GET /v1/orgs/{orgId}/usage`** (§3): org governance is owner-gated and lives under `/v1/orgs/`, keeping this section purely cluster ops. `internal/admin` itself was never built — see docs/00-project-state.md "Known issues" for why that's now considered permanent rather than a gap (`internal/storage` and `internal/events`' own package doc comments cross-reference this too).
 
 ## 10. Explicitly not versioned as gRPC
 

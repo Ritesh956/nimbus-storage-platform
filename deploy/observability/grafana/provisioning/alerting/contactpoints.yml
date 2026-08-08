@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# Routes to the same Mailpit catcher used for password-reset email
+# (docker-compose.yml's GF_SMTP_* env) — no real SMTP relay needed to see
+# an alert fire; check http://localhost:8025.
+contactPoints:
+  - orgId: 1
+    name: nimbus-ops
+    receivers:
+      - uid: nimbus-ops-email
+        type: email
+        settings:
+          addresses: ops@nimbus.dev
+          singleEmail: true

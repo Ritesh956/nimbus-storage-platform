@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"nimbus/internal/platform/idgen"
 )
@@ -95,4 +97,30 @@ func (r *Repository) RevertRetry(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE dead_events SET status = 'dead', retried_at = NULL WHERE id = $1`, id)
 	return err
+}
+
+// RegisterMetrics wires nimbus_dlq_dead_events, a live gauge read straight
+// from Postgres at scrape time rather than an in-process counter — dead
+// events are inserted by nimbus-worker but resolved (retried) via
+// nimbus-api's admin endpoint, so an in-process gauge split by process (like
+// StorageNodeHealthy) would go negative the moment a retry lands on a
+// process that never saw the matching insert. A scrape-time DB read is
+// always exact and needs no background goroutine or cross-process state
+// (audit roadmap item #9, quick-wins session — the alert rule itself lives
+// in Grafana's provisioned rule group, see
+// deploy/observability/grafana/provisioning/alerting/).
+func (r *Repository) RegisterMetrics(logger *slog.Logger) {
+	prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "nimbus_dlq_dead_events",
+		Help: "Current count of dead_events rows with status='dead' — exhausted NATS redelivery, awaiting operator retry.",
+	}, func() float64 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var n float64
+		if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM dead_events WHERE status = 'dead'`).Scan(&n); err != nil {
+			logger.Warn("dlq metrics: count query failed, reporting 0", "error", err)
+			return 0
+		}
+		return n
+	}))
 }

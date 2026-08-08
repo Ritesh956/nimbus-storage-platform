@@ -13,7 +13,13 @@ nimbus/
 ├── backend/                           # the Go module — everything below is one `go build ./...`
 │   ├── cmd/                           # thin entrypoints only — flag/env parsing, wiring, then delegate to internal/
 │   │   ├── api/
-│   │   │   └── main.go                # builds nimbus-api: http server + all domain modules
+│   │   │   ├── main.go                # run(): infra setup (config/pg/redis/nats) + sequences the wire_*.go calls below
+│   │   │   ├── adapters.go            # cross-module port adapters (docs/03-hld.md §1) — used by main.go and the wire_*.go files
+│   │   │   ├── wire_auth.go           # auth + org: mutually dependent at construction time, wired together
+│   │   │   ├── wire_storage.go        # storage.Router + the /v1/admin/* cluster-ops routes (nodes/ring/dlq)
+│   │   │   ├── wire_files.go          # folder + file + search
+│   │   │   ├── wire_activity.go       # activity feed + SSE
+│   │   │   └── wire_upload.go         # upload + sharing (both build on file/folder/activity from the files above)
 │   │   └── worker/
 │   │       └── main.go                # builds nimbus-worker: NATS consumer + processing pipeline
 │   │
@@ -76,5 +82,5 @@ nimbus/
 - **Unit tests live beside the code they test** (`internal/storage/ring_test.go`, standard Go convention). **Revision (Day 12)**: the Go integration tests also live beside the code they test (`internal/auth/refresh_integration_test.go`, `internal/upload/complete_race_integration_test.go`), gated behind a `//go:build integration` tag, rather than in a separate `backend/test/` as this doc originally sketched — there ended up being only two, both naturally scoped to one package each, so a shared top-level test directory would have added indirection without a real benefit yet. Revisit if a cross-package integration test shows up.
 - **`cmd/api` and `cmd/worker` share all `internal/` packages** — this is what makes the "worker is already extracted as its own process" claim (HLD §1) concrete: they're two binaries built from one module, not one binary with a mode flag. Both independently construct their own `storage.Router` (each needs its own in-process health view — see LLD §5).
 - **Migrations are plain numbered SQL, not an ORM's auto-migration** — the schema in docs/05 is hand-designed (indexes, partial unique constraints, generated columns); an ORM's migration generator would fight some of those choices. Four migrations exist as of Day 9: initial schema, uploads/upload_chunks, upload target_file_id, and a search-tokenization fix (all documented in docs/05 and in each migration's own comment).
-- **`internal/admin` is a reserved, currently-empty package** — the admin-facing reads that exist today (storage node health) live directly in `storage.Handler` since they're a thin read over that module's own data; a real `admin` module would earn its keep once org-usage views or cross-module admin actions land.
+- **`internal/admin` does not exist, and per docs/00-project-state.md "Known issues" this is now considered permanent, not a gap** — superseding this doc's earlier framing of it as a "reserved, currently-empty package." Cluster-ops reads/writes (node health, hash ring, DLQ) ended up split across `storage.Handler` and `internal/events`, both properly platform-admin-gated; org-usage views landed in `internal/org` instead, since that's org governance, a distinct concern from cluster ops (see the "Cluster" vs. "Members" naming split, docs/00-project-state.md item 23). Both packages' doc comments cross-reference this for discoverability.
 - **`deploy/k8s/` is built as of Day 13** — a `nimbus-migrate` image (`Dockerfile.migrate`, `FROM migrate/migrate`, `COPY backend/migrations`) runs schema migrations as a Helm pre-install hook, rather than duplicating the SQL files into the chart (Helm's `.Files.Glob` can't reach outside the chart directory) or relying on a host-path volume mount (not portable outside Compose). The Grafana/Prometheus ConfigMaps under `deploy/k8s/infra/` are generated from `deploy/observability/` at apply time (`apply.sh`, `kubectl create configmap --from-file`) rather than duplicated as static YAML, for the same one-source-of-truth reason. `.github/workflows/ci.yml` is still lint+build only — Day 14.

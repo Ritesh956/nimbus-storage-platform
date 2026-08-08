@@ -1,0 +1,92 @@
+apiVersion: 1
+
+# Audit roadmap item #9 (quick-wins session): DLQ visibility (the admin
+# panel + /v1/admin/dlq, Tier 2 backlog) was human-triggered-only — nothing
+# surfaced a new dead event unless someone happened to check. This turns
+# nimbus_dlq_dead_events (internal/events.Repository.RegisterMetrics, a
+# live count of dead_events rows with status='dead', read from Postgres at
+# scrape time) into an actual page via the nimbus-ops contact point.
+groups:
+  - orgId: 1
+    name: nimbus-dlq
+    folder: Nimbus
+    interval: 1m
+    rules:
+      - uid: nimbus-dlq-dead-events
+        title: DLQ has unresolved dead events
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: nimbus_dlq_dead_events
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue has unresolved events"
+          description: "dead_events has had at least one row with status='dead' for 5+ minutes. Check GET /v1/admin/dlq or the admin UI's Dead-letter queue panel and retry or investigate."
+
+  # Architecture-gap session (audit §02): nimbus-api and nimbus-worker each
+  # run their own independent health-probe loop and each publish their own
+  # nimbus_storage_node_healthy series for the same node — a deliberate
+  # design choice (docs/04-lld.md §5, no shared health state on the resolve
+  # hot path), but previously nothing surfaced it if the two genuinely,
+  # persistently disagreed about a node's status. max-min across the
+  # per-node series is 0 when every process agrees and >0 the moment any
+  # of them don't; `for: 2m` (vs. the DLQ rule's 5m) filters the few-second
+  # disagreement a normal health transition causes without hiding a real,
+  # lasting split-brain.
+  - orgId: 1
+    name: nimbus-storage
+    folder: Nimbus
+    interval: 1m
+    rules:
+      - uid: nimbus-storage-health-disagreement
+        title: nimbus-api and nimbus-worker disagree on node health
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max by (node) (nimbus_storage_node_healthy) - min by (node) (nimbus_storage_node_healthy)
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "nimbus-api and nimbus-worker disagree about a storage node's health"
+          description: "{{ $labels.node }}: the two processes' independent health-probe loops have reported different status for 2+ minutes — not just a transition blip. Check GET /v1/admin/nodes (reads Postgres, whichever process wrote last) and each process's own /metrics for nimbus_storage_node_healthy."

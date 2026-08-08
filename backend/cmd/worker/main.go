@@ -93,7 +93,7 @@ func run() error {
 		storageNodes[i] = storage.StorageNode{ID: storage.NodeID(n.ID), Endpoint: n.Endpoint, PublicEndpoint: n.PublicEndpoint}
 	}
 	storageRepo := storage.NewRepository(pg)
-	router, err := storage.NewRouter(storageRepo, rdb, storageNodes, cfg.MinIOAccessKey, cfg.MinIOSecretKey, logger)
+	router, err := storage.NewRouter(storageRepo, rdb, storageNodes, cfg.MinIOAccessKey, cfg.MinIOSecretKey, logger, cfg.StorageSlowThreshold)
 	if err != nil {
 		return fmt.Errorf("storage router: %w", err)
 	}

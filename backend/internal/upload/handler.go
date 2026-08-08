@@ -148,6 +148,10 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, httpserver.ErrConflict, "chunk is not awaiting commit")
 	case errors.Is(err, ErrChecksumMismatch):
 		httpserver.WriteError(w, r, httpserver.ErrConflict, "replica checksums do not agree")
+	case errors.Is(err, ErrInsufficientReplicas):
+		httpserver.WriteError(w, r, httpserver.ErrConflict, "too few replicas acknowledged this chunk")
+	case errors.Is(err, ErrChunkTooLarge):
+		httpserver.WriteError(w, r, httpserver.ErrTooLarge, "chunk exceeds the configured maximum chunk size")
 	case errors.Is(err, ErrUploadNotInProgress):
 		httpserver.WriteError(w, r, httpserver.ErrConflict, "upload is not in progress")
 	case errors.Is(err, ErrEmptyChunkOrder):

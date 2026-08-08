@@ -23,6 +23,10 @@ jobs:
         run: go build ./...
       - name: unit test
         run: go test ./... -short
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
 
   frontend:
     runs-on: ubuntu-latest
@@ -43,6 +47,8 @@ jobs:
       # versions changed.
       - name: install deps
         run: npm install
+      - name: audit
+        run: npm audit --audit-level=high
       - name: lint
         run: npm run lint
       - name: build

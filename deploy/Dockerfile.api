@@ -6,7 +6,8 @@ COPY backend/ .
 RUN CGO_ENABLED=0 go build -o /out/nimbus-api ./cmd/api
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 nimbus
 COPY --from=build /out/nimbus-api /usr/local/bin/nimbus-api
+USER nimbus
 EXPOSE 8080
 ENTRYPOINT ["nimbus-api"]

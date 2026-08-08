@@ -55,6 +55,15 @@ type Config struct {
 	ReplicationFactor int // N
 	WriteQuorum       int // W
 
+	// StorageSlowThreshold is how high a node's rolling health-probe
+	// latency EWMA has to climb before Router.Resolve treats it as a
+	// second-tier placement choice — still eligible, but only used to fill
+	// a shortfall the faster healthy nodes couldn't (audit §02: "no
+	// capacity/latency signal folds into placement" was the named gap).
+	// 0 disables the distinction entirely (every healthy node is first-tier,
+	// the pre-fix behavior).
+	StorageSlowThreshold time.Duration
+
 	// MaxUploadBytes / OrgQuotaBytes enforce upload caps and per-org
 	// storage quotas (post-v1 backlog #8). 0 disables the check.
 	MaxUploadBytes int64
@@ -64,6 +73,18 @@ type Config struct {
 	// bucket (docs/04-lld.md §4). RPS 0 disables rate limiting entirely.
 	RateLimitRPS   int
 	RateLimitBurst int
+
+	// LoginRateLimitRPS / LoginRateLimitBurst gate a second, much tighter
+	// bucket keyed by IP alone and applied only to POST /v1/auth/login and
+	// /v1/auth/login/totp, independent of the general per-caller limiter
+	// above. Those two routes run before authentication exists, so the
+	// general limiter's per-user bucket never applies to them, and its
+	// generous default (25rps/burst 50) is cheap enough to make online
+	// password/TOTP guessing against a single account viable. RPS 0
+	// disables this bucket entirely (falls back to the general limiter,
+	// if any).
+	LoginRateLimitRPS   int
+	LoginRateLimitBurst int
 
 	// GCInterval is how often nimbus-worker's chunk sweeper ticks; GCGrace
 	// is both how long a chunk must be unreferenced-and-unseen before it's
@@ -82,28 +103,30 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		Env:                getEnv("NIMBUS_ENV", "dev"),
-		HTTPPort:           getEnv("NIMBUS_HTTP_PORT", "8080"),
-		CORSOrigin:         getEnv("NIMBUS_CORS_ORIGIN", "*"),
-		PostgresDSN:        os.Getenv("NIMBUS_POSTGRES_DSN"),
-		RedisAddr:          getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
-		NATSURL:            getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
-		JWTSecret:          os.Getenv("NIMBUS_JWT_SECRET"),
-		SMTPAddr:           os.Getenv("NIMBUS_SMTP_ADDR"),
-		SMTPFrom:           getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
-		WebBaseURL:         getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
-		MinIOAccessKey:     os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
-		MinIOSecretKey:     os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
-		AdminEmail:         strings.ToLower(strings.TrimSpace(os.Getenv("NIMBUS_ADMIN_EMAIL"))),
-		AdminPassword:      os.Getenv("NIMBUS_ADMIN_PASSWORD"),
-		TrashRetentionDays: 30,
-		ChunkSizeBytes:     8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
-		ReplicationFactor:  2,
-		WriteQuorum:        2,
-		MaxUploadBytes:     100 * 1024 * 1024,       // 100 MiB per file
-		OrgQuotaBytes:      10 * 1024 * 1024 * 1024, // 10 GiB per org
-		RateLimitRPS:       25,
-		RateLimitBurst:     50,
+		Env:                 getEnv("NIMBUS_ENV", "dev"),
+		HTTPPort:            getEnv("NIMBUS_HTTP_PORT", "8080"),
+		CORSOrigin:          getEnv("NIMBUS_CORS_ORIGIN", "*"),
+		PostgresDSN:         os.Getenv("NIMBUS_POSTGRES_DSN"),
+		RedisAddr:           getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
+		NATSURL:             getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
+		JWTSecret:           os.Getenv("NIMBUS_JWT_SECRET"),
+		SMTPAddr:            os.Getenv("NIMBUS_SMTP_ADDR"),
+		SMTPFrom:            getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
+		WebBaseURL:          getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
+		MinIOAccessKey:      os.Getenv("NIMBUS_MINIO_ACCESS_KEY"),
+		MinIOSecretKey:      os.Getenv("NIMBUS_MINIO_SECRET_KEY"),
+		AdminEmail:          strings.ToLower(strings.TrimSpace(os.Getenv("NIMBUS_ADMIN_EMAIL"))),
+		AdminPassword:       os.Getenv("NIMBUS_ADMIN_PASSWORD"),
+		TrashRetentionDays:  30,
+		ChunkSizeBytes:      8 * 1024 * 1024, // 8 MiB, docs/02-system-design.md §2.1
+		ReplicationFactor:   2,
+		WriteQuorum:         2,
+		MaxUploadBytes:      100 * 1024 * 1024,       // 100 MiB per file
+		OrgQuotaBytes:       10 * 1024 * 1024 * 1024, // 10 GiB per org
+		RateLimitRPS:        25,
+		RateLimitBurst:      50,
+		LoginRateLimitRPS:   1,
+		LoginRateLimitBurst: 5,
 	}
 
 	var err error
@@ -117,6 +140,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.GCGrace, err = getDuration("NIMBUS_GC_GRACE", time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.StorageSlowThreshold, err = getDuration("NIMBUS_STORAGE_SLOW_THRESHOLD", 200*time.Millisecond); err != nil {
 		return Config{}, err
 	}
 	if v := os.Getenv("NIMBUS_TRASH_RETENTION_DAYS"); v != "" {
@@ -160,6 +186,20 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("NIMBUS_RATE_LIMIT_BURST: %w", err)
 		}
 		cfg.RateLimitBurst = n
+	}
+	if v := os.Getenv("NIMBUS_LOGIN_RATE_LIMIT_RPS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_LOGIN_RATE_LIMIT_RPS: %w", err)
+		}
+		cfg.LoginRateLimitRPS = n
+	}
+	if v := os.Getenv("NIMBUS_LOGIN_RATE_LIMIT_BURST"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIMBUS_LOGIN_RATE_LIMIT_BURST: %w", err)
+		}
+		cfg.LoginRateLimitBurst = n
 	}
 	if v := os.Getenv("NIMBUS_REPLICATION_FACTOR"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -248,6 +288,9 @@ func (c Config) validate() error {
 	}
 	if c.RateLimitRPS > 0 && c.RateLimitBurst < 1 {
 		return fmt.Errorf("NIMBUS_RATE_LIMIT_BURST must be at least 1 when rate limiting is enabled")
+	}
+	if c.LoginRateLimitRPS > 0 && c.LoginRateLimitBurst < 1 {
+		return fmt.Errorf("NIMBUS_LOGIN_RATE_LIMIT_BURST must be at least 1 when login rate limiting is enabled")
 	}
 	return nil
 }

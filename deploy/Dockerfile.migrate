@@ -1,2 +1,4 @@
 FROM migrate/migrate:v4.17.1
+RUN adduser -D -u 10001 migrate
 COPY backend/migrations /migrations
+USER migrate

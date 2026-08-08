@@ -1,6 +1,10 @@
 // Package storage owns the distributed piece: consistent-hash ring, replica
 // placement, node health, and failover — see docs/02-system-design.md §1-2
-// and docs/04-lld.md §1.
+// and docs/04-lld.md §1. Its handler.go also serves the node/ring half of
+// the /v1/admin/* cluster-ops routes (the DLQ half lives in
+// internal/events) — internal/admin was sketched in early docs and never
+// materialized; docs/00-project-state.md "Known issues" records that split
+// as permanent, not a gap.
 package storage
 
 import "errors"

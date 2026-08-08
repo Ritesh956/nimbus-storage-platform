@@ -63,13 +63,25 @@ type Service struct {
 	publisher         EventPublisher
 	usage             UsageReader
 	replicationFactor int
+	// writeQuorum is the minimum number of replicas that must ack a chunk
+	// for CommitChunk to accept it — 0 (or 1) means "any non-empty set",
+	// matching the historical behavior before this was wired up. See
+	// CommitChunk's doc comment for why this is enforced as a floor rather
+	// than requiring exactly replicationFactor.
+	writeQuorum int
+	// chunkSizeBytes caps an individual committed chunk's declared size —
+	// 0 disables the check. Existing purely so the config value that names
+	// the client's expected chunking discipline (docs/02-system-design.md
+	// §2.1) actually means something server-side, rather than being logged
+	// about and never read (audit finding, §01).
+	chunkSizeBytes int64
 	// maxUploadBytes / orgQuotaBytes are enforcement limits; 0 disables the
 	// respective check (docs/06-api-design.md §5).
 	maxUploadBytes int64
 	orgQuotaBytes  int64
 }
 
-func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, usage UsageReader, replicationFactor int, maxUploadBytes, orgQuotaBytes int64) *Service {
+func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, usage UsageReader, replicationFactor, writeQuorum int, chunkSizeBytes, maxUploadBytes, orgQuotaBytes int64) *Service {
 	return &Service{
 		repo:              repo,
 		router:            router,
@@ -80,6 +92,8 @@ func NewService(repo *Repository, router *storage.Router, files FileCreator, fol
 		publisher:         publisher,
 		usage:             usage,
 		replicationFactor: replicationFactor,
+		writeQuorum:       writeQuorum,
+		chunkSizeBytes:    chunkSizeBytes,
 		maxUploadBytes:    maxUploadBytes,
 		orgQuotaBytes:     orgQuotaBytes,
 	}
@@ -200,6 +214,18 @@ func (s *Service) InitChunk(ctx context.Context, u Upload, hash string) ([]Chunk
 // Verifying the ETag equals MD5(original content) would need either
 // client-computed MD5 alongside SHA-256, or S3 checksum trailers — noted
 // as a roadmap item, not implemented here.
+//
+// The number of etags reported is the *partial-commit path* the write
+// quorum applies to: a caller may present fewer than replicationFactor
+// entries (some replica PUTs failed) and still succeed, as long as at
+// least writeQuorum of them are present and agree — accepting under-N but
+// at-least-W is exactly what distinguishes a write quorum from requiring
+// every replica. Today's frontend (frontend/lib/upload.ts) doesn't yet
+// exercise the partial case — it aborts the whole chunk on any single PUT
+// failure — so this floor is currently only reachable by a future, more
+// resilient client or a misbehaving one; either way, an under-replicated
+// commit is now rejected rather than silently accepted (previously any
+// non-empty, mutually-agreeing set was accepted, i.e. an implicit W=1).
 func (s *Service) CommitChunk(ctx context.Context, u Upload, hash string, sizeBytes int64, etags map[string]string) error {
 	if u.Status != StatusInProgress {
 		return ErrUploadNotInProgress
@@ -211,8 +237,14 @@ func (s *Service) CommitChunk(ctx context.Context, u Upload, hash string, sizeBy
 	if state != ChunkPresigned {
 		return ErrInvalidState
 	}
+	if s.chunkSizeBytes > 0 && sizeBytes > s.chunkSizeBytes {
+		return ErrChunkTooLarge
+	}
 	if len(etags) == 0 {
 		return ErrChecksumMismatch
+	}
+	if s.writeQuorum > 0 && len(etags) < s.writeQuorum {
+		return ErrInsufficientReplicas
 	}
 	var first string
 	for _, etag := range etags {

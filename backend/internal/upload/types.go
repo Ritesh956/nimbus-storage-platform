@@ -63,6 +63,15 @@ var (
 	ErrMissingChunks       = errors.New("one or more chunks in chunk_order were never committed")
 	ErrFileTooLarge        = errors.New("file exceeds the maximum upload size")
 	ErrQuotaExceeded       = errors.New("organization storage quota exceeded")
+	// ErrInsufficientReplicas means fewer replicas ack'd this chunk than the
+	// configured write quorum requires (config.WriteQuorum) — see
+	// Service.CommitChunk. Distinct from ErrChecksumMismatch: the replicas
+	// that did report agree with each other, there just weren't enough of
+	// them.
+	ErrInsufficientReplicas = errors.New("too few replicas acknowledged this chunk to satisfy the write quorum")
+	// ErrChunkTooLarge means a committed chunk's declared size exceeds the
+	// configured maximum (config.ChunkSizeBytes) — see Service.CommitChunk.
+	ErrChunkTooLarge = errors.New("chunk exceeds the configured maximum chunk size")
 	// ErrAlreadyCompleting signals a concurrent /complete call for the same
 	// upload won the race (CAS on status = 'in_progress' matched zero
 	// rows). The service re-fetches and returns the winner's result rather

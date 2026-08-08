@@ -26,6 +26,11 @@ const (
 	// health transition — exported because internal/live relays it to
 	// browsers over SSE (backlog #12).
 	HealthChangesChannel = "nimbus:health:changes"
+	// latencyEWMAAlpha weights each new probe RTT against the running
+	// average — high enough that a node degrading mid-run is reflected
+	// within a few 2s probe ticks, low enough that one slow tick doesn't
+	// itself flip a node's tier.
+	latencyEWMAAlpha = 0.3
 )
 
 // Router owns the hash ring, per-node circuit breakers, and the
@@ -37,11 +42,18 @@ type Router struct {
 	nodes    map[NodeID]StorageNode
 	breakers map[NodeID]*breaker
 	health   map[NodeID]NodeStatus
+	// latencyEWMA is the rolling average successful-probe RTT per node —
+	// Resolve reads it (via isSlow) to sink a technically-alive-but-slow
+	// node behind faster ones instead of treating every healthy node
+	// identically (audit §02). Absent until a node's first successful
+	// probe, at which point it seeds from that first measurement.
+	latencyEWMA map[NodeID]time.Duration
 
-	repo       *Repository
-	redis      *redis.Client
-	httpClient *http.Client
-	logger     *slog.Logger
+	repo          *Repository
+	redis         *redis.Client
+	httpClient    *http.Client
+	logger        *slog.Logger
+	slowThreshold time.Duration
 
 	// internalMinio is used for admin calls nimbus-api makes itself
 	// (bucket creation); publicMinio is used only to build presigned URLs
@@ -52,11 +64,14 @@ type Router struct {
 
 // NewRouter builds a Router and its per-node MinIO clients. Returns an
 // error if any node's endpoint can't be parsed into a MinIO client.
-func NewRouter(repo *Repository, redisClient *redis.Client, nodes []StorageNode, minioAccessKey, minioSecretKey string, logger *slog.Logger) (*Router, error) {
+// slowThreshold is the latency-tier cutoff Resolve uses (0 disables the
+// distinction — every healthy node is first-tier).
+func NewRouter(repo *Repository, redisClient *redis.Client, nodes []StorageNode, minioAccessKey, minioSecretKey string, logger *slog.Logger, slowThreshold time.Duration) (*Router, error) {
 	ids := make([]NodeID, 0, len(nodes))
 	nodeMap := make(map[NodeID]StorageNode, len(nodes))
 	breakers := make(map[NodeID]*breaker, len(nodes))
 	health := make(map[NodeID]NodeStatus, len(nodes))
+	latencyEWMA := make(map[NodeID]time.Duration, len(nodes))
 	internalMinio := make(map[NodeID]*minio.Client, len(nodes))
 	publicMinio := make(map[NodeID]*minio.Client, len(nodes))
 	for _, n := range nodes {
@@ -82,10 +97,12 @@ func NewRouter(repo *Repository, redisClient *redis.Client, nodes []StorageNode,
 		nodes:         nodeMap,
 		breakers:      breakers,
 		health:        health,
+		latencyEWMA:   latencyEWMA,
 		repo:          repo,
 		redis:         redisClient,
 		httpClient:    &http.Client{Timeout: probeTimeout},
 		logger:        logger,
+		slowThreshold: slowThreshold,
 		internalMinio: internalMinio,
 		publicMinio:   publicMinio,
 	}, nil
@@ -114,9 +131,28 @@ func (rt *Router) Bootstrap(ctx context.Context) error {
 // order. It only touches in-memory state — no network I/O — which is what
 // keeps failover fast: the hot path never waits on a health probe
 // (docs/04-lld.md §5).
+//
+// Placement is latency-tiered, not purely ring-order: a first pass
+// considers only healthy nodes whose rolling probe-latency EWMA is under
+// slowThreshold ("fast"). Only if that pass can't fill n does a second pass
+// fall back to every healthy node regardless of latency — so a
+// technically-alive-but-slow node is used to complete a quorum that
+// genuinely needs it, but never preferred over a faster node at the same
+// ring distance (audit §02: "no capacity/latency signal folds into
+// placement" was the named gap; slowThreshold 0 disables the distinction,
+// reproducing the pre-fix single-pass behavior).
 func (rt *Router) Resolve(chunkHash string, n int) ([]NodeID, error) {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
+
+	if rt.slowThreshold > 0 {
+		fast, err := rt.ring.SelectReplicas(chunkHash, n, func(id NodeID) bool {
+			return rt.health[id] == StatusHealthy && rt.latencyEWMA[id] < rt.slowThreshold
+		})
+		if err == nil {
+			return fast, nil
+		}
+	}
 
 	ids, err := rt.ring.SelectReplicas(chunkHash, n, func(id NodeID) bool {
 		return rt.health[id] == StatusHealthy
@@ -190,7 +226,10 @@ func (rt *Router) probeAll(ctx context.Context) {
 }
 
 func (rt *Router) probeOne(ctx context.Context, node StorageNode) {
-	ok := rt.ping(ctx, node)
+	ok, rtt := rt.ping(ctx, node)
+	if ok {
+		rt.recordLatency(node.ID, rtt)
+	}
 
 	rt.mu.RLock()
 	b := rt.breakers[node.ID]
@@ -237,19 +276,42 @@ func (rt *Router) probeOne(ctx context.Context, node StorageNode) {
 	}
 }
 
-func (rt *Router) ping(ctx context.Context, node StorageNode) bool {
+// ping reports liveness and, only when ok, how long the round trip took —
+// a failed/timed-out probe's "latency" (the full probeTimeout) would only
+// pollute the rolling average with a number that means "unreachable," not
+// "slow," so callers must ignore rtt when ok is false.
+func (rt *Router) ping(ctx context.Context, node StorageNode) (ok bool, rtt time.Duration) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, node.Endpoint+"/minio/health/live", nil)
 	if err != nil {
-		return false
+		return false, 0
 	}
+	start := time.Now()
 	resp, err := rt.httpClient.Do(req)
 	if err != nil {
-		return false
+		return false, 0
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return resp.StatusCode == http.StatusOK, time.Since(start)
+}
+
+// recordLatency updates node's rolling probe-latency EWMA from a fresh
+// successful measurement, seeding it on the node's first-ever successful
+// probe rather than easing in from zero (which would make a node look
+// artificially fast until the average caught up).
+func (rt *Router) recordLatency(id NodeID, rtt time.Duration) {
+	rt.mu.Lock()
+	prev, seen := rt.latencyEWMA[id]
+	if !seen {
+		rt.latencyEWMA[id] = rtt
+	} else {
+		rt.latencyEWMA[id] = time.Duration(latencyEWMAAlpha*float64(rtt) + (1-latencyEWMAAlpha)*float64(prev))
+	}
+	current := rt.latencyEWMA[id]
+	rt.mu.Unlock()
+
+	metrics.StorageNodeLatencyMS.WithLabelValues(string(id)).Set(float64(current.Microseconds()) / 1000.0)
 }
 
 func statusRedisKey(id NodeID) string    { return "nimbus:node:" + string(id) + ":status" }

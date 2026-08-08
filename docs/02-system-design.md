@@ -120,7 +120,8 @@ sequenceDiagram
         end
     end
 ```
-- A down node is excluded from new placements immediately; it is **not** proactively re-replicated onto a new node automatically — that's out of scope for v1 (see SRS §4/§6). Existing chunks on a down node just have reduced redundancy until it comes back or a manual re-replication script is run.
+- A down node is excluded from new placements immediately; it is **not** proactively re-replicated onto a new node automatically — that's out of scope for v1 (see SRS §4/§6). Existing chunks on a down node just have reduced redundancy until it comes back or a manual repair is run: `POST /v1/admin/nodes/{nodeId}/repair` (built in the architecture-gap session, `internal/storage/repair.go`) re-verifies every chunk that node is recorded as holding and re-copies from a surviving replica whatever's physically missing — this doc had described "a manual re-replication script" here since the original write-up, before one actually existed; it's now real, an HTTP endpoint rather than a standalone script, still deliberately manual-trigger rather than automatic-on-recovery (see the file's own doc comment for the repair-storm reasoning).
+- Placement itself is latency-tiered as of the same session: `Router.Resolve` prefers healthy nodes whose rolling probe-latency EWMA is under a threshold (`NIMBUS_STORAGE_SLOW_THRESHOLD`, default 200ms), falling back to a technically-alive-but-slow node only when the fast tier can't fill the quorum — previously every healthy node was treated identically regardless of how slow its probes had gotten.
 - This is the mechanism exercised by the chaos scenario (SRS FR-21): kill a node mid-transfer, show writes/reads continue on the remaining replica, bring the node back, and demonstrate reads are still correct via checksum verification.
 
 ## 3. Metadata & consistency model

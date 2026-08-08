@@ -31,7 +31,13 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 COPY --from=build /src/public ./public
-COPY --from=build /src/.next/standalone ./
-COPY --from=build /src/.next/static ./.next/static
+# --chown up front rather than a separate RUN chown -R: the standalone
+# output is small enough that this doesn't cost a meaningfully bigger layer,
+# and node:22-alpine already ships an unprivileged "node" user/group (uid
+# 1000) so there's no adduser step needed like the from-scratch alpine
+# images (api/worker) require.
+COPY --from=build --chown=node:node /src/.next/standalone ./
+COPY --from=build --chown=node:node /src/.next/static ./.next/static
+USER node
 EXPOSE 3000
 ENTRYPOINT ["node", "server.js"]

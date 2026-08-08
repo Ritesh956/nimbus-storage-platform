@@ -106,3 +106,20 @@ func (h *Handler) Ring(w http.ResponseWriter, r *http.Request) {
 
 	httpserver.WriteJSON(w, http.StatusOK, resp)
 }
+
+// Repair serves POST /v1/admin/nodes/{nodeId}/repair (audit §02 — "recovery
+// restores routing but not necessarily the replica count"): re-verifies
+// every chunk this node is recorded as holding, restoring any physically
+// missing from a surviving replica. Manual-trigger, synchronous — the
+// response is the pass's own result, not a job handle, since there's no
+// background queue for this (see repair.go's doc comment for why automatic
+// isn't done here).
+func (h *Handler) Repair(w http.ResponseWriter, r *http.Request) {
+	nodeID := NodeID(r.PathValue("nodeId"))
+	result, err := h.router.RepairNode(r.Context(), nodeID)
+	if err != nil {
+		httpserver.WriteError(w, r, httpserver.ErrNotFound, err.Error())
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, result)
+}

@@ -88,3 +88,51 @@ func (r *Repository) LocationsForChunk(ctx context.Context, chunkHash string) ([
 	}
 	return out, rows.Err()
 }
+
+// chunk_locations is written by upload.Repository on commit (its
+// UpsertChunkLocation) but read directly here too, rather than through an
+// adapter — LocationsForChunk above already established that precedent;
+// the three methods below extend it to repair's write path (audit §02,
+// "recovery restores routing but not necessarily the replica count").
+
+// CommittedChunksForNode lists every chunk hash this node is recorded as
+// holding a committed replica of — RepairNode's starting point for deciding
+// what to re-verify.
+func (r *Repository) CommittedChunksForNode(ctx context.Context, node NodeID) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT chunk_hash FROM chunk_locations WHERE node_id = $1 AND status = 'committed'`, string(node))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		out = append(out, hash)
+	}
+	return out, rows.Err()
+}
+
+// MarkChunkLocationDegraded flags a (chunk, node) pair whose object RepairNode
+// found physically missing — visible in a direct query even before (or if)
+// the repair copy that follows succeeds, so a failed repair doesn't leave a
+// silently-wrong 'committed' row behind.
+func (r *Repository) MarkChunkLocationDegraded(ctx context.Context, chunkHash string, node NodeID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE chunk_locations SET status = 'degraded' WHERE chunk_hash = $1 AND node_id = $2`,
+		chunkHash, string(node))
+	return err
+}
+
+// MarkChunkLocationRepaired flips a (chunk, node) pair back to committed
+// once RepairNode has successfully re-copied the bytes.
+func (r *Repository) MarkChunkLocationRepaired(ctx context.Context, chunkHash string, node NodeID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE chunk_locations SET status = 'committed' WHERE chunk_hash = $1 AND node_id = $2`,
+		chunkHash, string(node))
+	return err
+}
