@@ -27,6 +27,18 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck
         run: govulncheck ./...
+      # Roadmap #11 (§07/§10's "checked by hand each session" gap): fails
+      # the build if docs/openapi.json doesn't match what cmd/openapi-gen
+      # produces from the real route registrations right now — the one
+      # thing that would otherwise let the spec silently drift the same way
+      # docs/06-api-design.md used to.
+      - name: openapi spec is up to date
+        run: |
+          go run ./cmd/openapi-gen -out /tmp/openapi.json
+          diff -u ../docs/openapi.json /tmp/openapi.json || {
+            echo "::error::docs/openapi.json is stale — regenerate with: (cd backend && go run ./cmd/openapi-gen -out ../docs/openapi.json)"
+            exit 1
+          }
 
   frontend:
     runs-on: ubuntu-latest
@@ -51,6 +63,19 @@ jobs:
         run: npm audit --audit-level=high
       - name: lint
         run: npm run lint
+      # Roadmap #11's other half: frontend/lib/types.ts is now a thin
+      # re-export over lib/api-schema.generated.ts (see that file's header)
+      # instead of a hand-maintained mirror of the Go response shapes —
+      # fails the build if the generated file doesn't match what
+      # openapi-typescript produces from the checked-in docs/openapi.json
+      # right now.
+      - name: generated api types are up to date
+        run: |
+          npx openapi-typescript ../docs/openapi.json -o /tmp/api-schema.generated.ts
+          diff -u lib/api-schema.generated.ts /tmp/api-schema.generated.ts || {
+            echo "::error::frontend/lib/api-schema.generated.ts is stale — regenerate with: (cd frontend && npx openapi-typescript ../docs/openapi.json -o lib/api-schema.generated.ts)"
+            exit 1
+          }
       - name: build
         run: npm run build
 
