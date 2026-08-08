@@ -8,6 +8,7 @@ import { Card, EyebrowLabel } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { LogoMark, FileIcon, FolderIcon, DownloadIcon, ArrowLeftIcon } from "@/components/ui/Icons";
 import { formatBytes } from "@/lib/format";
+import { assembleFromPlan, saveBlob } from "@/lib/download";
 import type { DownloadPlan, ResolvedShare, ShareFileInfo, ShareFolderInfo } from "@/lib/types";
 
 // Deliberately outside app/app/ — this route is never wrapped in
@@ -54,37 +55,6 @@ export default function SharePage() {
       </div>
     </div>
   );
-}
-
-// assembleFromPlan reassembles a file client-side from presigned chunk
-// URLs, primary replica first with fallback — same walk FileRow.download
-// does.
-async function assembleFromPlan(plan: DownloadPlan): Promise<Blob> {
-  const parts: BlobPart[] = [];
-  for (const chunk of [...plan.chunks].sort((a, b) => a.sequence - b.sequence)) {
-    let ok = false;
-    for (const url of chunk.targets) {
-      const res = await fetch(url);
-      if (res.ok) {
-        parts.push(await res.blob());
-        ok = true;
-        break;
-      }
-    }
-    if (!ok) throw new Error(`could not fetch chunk ${chunk.sequence} from any replica`);
-  }
-  return new Blob(parts);
-}
-
-function saveBlob(blob: Blob, name: string) {
-  const blobUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = blobUrl;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(blobUrl);
 }
 
 async function downloadFromPlan(plan: DownloadPlan, name: string) {

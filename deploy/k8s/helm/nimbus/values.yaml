@@ -41,5 +41,8 @@ secrets:
   minioSecretKey: "nimbus-secret"
   # The single seeded platform-admin login (the only way to gain
   # cluster-ops /v1/admin/* access — see auth.Repository.EnsureSeededAdmin).
+  # Held to a higher bar than regular signup passwords (config.go's
+  # validateAdminPassword): 12+ chars, at least 3 of
+  # uppercase/lowercase/digit/symbol.
   adminEmail: "admin@nimbus.dev"
-  adminPassword: "dev-only-admin-pass-change-me"
+  adminPassword: "Dev-Admin-Pass1-ChangeMe!"

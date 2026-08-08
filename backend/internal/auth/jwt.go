@@ -17,11 +17,19 @@ var ErrInvalidToken = errors.New("invalid access token")
 
 type tokenIssuer struct {
 	secret []byte
-	ttl    time.Duration
+	// prevSecret optionally verifies tokens signed under a just-rotated-out
+	// secret (config.Config.JWTSecretPrevious) until they naturally expire —
+	// nil disables the fallback. New tokens are always issued under secret.
+	prevSecret []byte
+	ttl        time.Duration
 }
 
-func newTokenIssuer(secret string, ttl time.Duration) *tokenIssuer {
-	return &tokenIssuer{secret: []byte(secret), ttl: ttl}
+func newTokenIssuer(secret, prevSecret string, ttl time.Duration) *tokenIssuer {
+	t := &tokenIssuer{secret: []byte(secret), ttl: ttl}
+	if prevSecret != "" {
+		t.prevSecret = []byte(prevSecret)
+	}
+	return t
 }
 
 // issue mints a signed access token and returns its jti (needed by the
@@ -40,12 +48,24 @@ func (t *tokenIssuer) issue(userID string) (token, jti string, expiresAt time.Ti
 }
 
 func (t *tokenIssuer) verify(tokenStr string) (userID, jti string, expiresAt time.Time, err error) {
+	if userID, jti, expiresAt, err = t.verifyWithKey(tokenStr, t.secret); err == nil {
+		return userID, jti, expiresAt, nil
+	}
+	if len(t.prevSecret) > 0 {
+		if userID, jti, expiresAt, err := t.verifyWithKey(tokenStr, t.prevSecret); err == nil {
+			return userID, jti, expiresAt, nil
+		}
+	}
+	return "", "", time.Time{}, ErrInvalidToken
+}
+
+func (t *tokenIssuer) verifyWithKey(tokenStr string, key []byte) (userID, jti string, expiresAt time.Time, err error) {
 	claims := &jwt.RegisteredClaims{}
 	parsed, err := jwt.ParseWithClaims(tokenStr, claims, func(tok *jwt.Token) (any, error) {
 		if _, ok := tok.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, ErrInvalidToken
 		}
-		return t.secret, nil
+		return key, nil
 	})
 	if err != nil || !parsed.Valid || claims.ExpiresAt == nil {
 		return "", "", time.Time{}, ErrInvalidToken

@@ -57,7 +57,7 @@ func wireAuth(
 	// returned — nothing outside this file gates a route on it.
 	requireOrgAdmin := org.RequireRole(orgRepo, org.RoleAdmin)
 
-	authSvc = auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL, orgSvc)
+	authSvc = auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretPrevious, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, mailer, cfg.WebBaseURL, orgSvc)
 	authHandler := auth.NewHandler(authSvc)
 	requireAuth = auth.Middleware(authSvc)
 	requirePlatformAdmin = auth.RequirePlatformAdmin(authRepo)

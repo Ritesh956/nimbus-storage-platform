@@ -90,13 +90,13 @@ Login, refresh, and logout above each also write a row to `auth_audit_log` (FR-4
 
 | Method | Path | Body | 2xx | Notes |
 |---|---|---|---|---|
-| POST | `/v1/chunks/check` | `{hashes: [sha256hex...]}` | 200 `{missing: [sha256hex...]}` | global dedup check, no org scoping |
 | POST | `/v1/uploads` | `{folder_id, name, size_bytes, mime_type}` **or** `{file_id, size_bytes, mime_type}` | 201 `{upload_id}` | `file_id` form uploads a new version of an existing file instead of creating one (added Day 6); `folder_id`/`name` are derived from the target file in that case |
+| POST | `/v1/uploads/{uploadId}/chunks/check` | `{hashes: [sha256hex...]}` | 200 `{missing: [sha256hex...]}` | dedup check, scoped to `uploadId`'s org (audit §05 proof-of-possession fix — previously a bare global lookup at `/v1/chunks/check`, before `uploadId` existed to scope it); a hash counts as present only if this org committed it before, not merely that it exists somewhere |
 | POST | `/v1/uploads/{uploadId}/chunks/{hash}/init` | — | 200 `{targets: [{node_id, put_url}], expires_at}` | N targets (replication factor, default 2) |
-| POST | `/v1/uploads/{uploadId}/chunks/{hash}/commit` | `{size_bytes, etags: {node_id: etag}}` | 200 `{status: "committed"}` | 409 if replica ETags disagree (corruption signal) or if fewer than `NIMBUS_WRITE_QUORUM` etags are present (quick-wins architecture session, docs/00-project-state.md item 29); 413 if `size_bytes` exceeds `NIMBUS_CHUNK_SIZE_BYTES` |
+| POST | `/v1/uploads/{uploadId}/chunks/{hash}/commit` | `{size_bytes, etags: {node_id: etag}}` | 200 `{status: "committed"}` | 409 if replica ETags disagree (corruption signal) or if fewer than `NIMBUS_WRITE_QUORUM` etags are present (quick-wins architecture session, docs/00-project-state.md item 29); 413 if `size_bytes` exceeds `NIMBUS_CHUNK_SIZE_BYTES`; also records an `org_chunk_proofs` row so this org's future dedup checks can trust the chunk |
 | POST | `/v1/uploads/{uploadId}/complete` | `{chunk_order: [hash...], size_bytes, checksum_sha256}` + `Idempotency-Key` header | 201 `{file_id, version_id}` | also (best-effort) records a `uploaded` activity event and publishes `nimbus.uploads.completed` to NATS |
 
-Resumability: a client that drops mid-upload re-calls `/chunks/check` on reconnect — already-committed chunks come back as not-missing. No separate "resume" endpoint.
+Resumability: the frontend persists `{upload_id}` per file fingerprint to `localStorage` and reuses it across a page reload (`frontend/lib/upload.ts`) — a client that drops mid-upload and retries re-calls `/chunks/check` on the *same* `upload_id`, and already-committed chunks come back as not-missing. No separate server-side "resume" endpoint.
 
 **GC interaction (Tier 3 session):** `/chunks/check` reporting a chunk present also renews its GC lease (`chunks.last_seen_at`), and chunks the collector has doomed are deliberately reported *missing* — the client re-uploads those bytes and the commit resurrects the chunk. Contract-wise nothing changes for clients (`missing` means "send it"); it just may occasionally include content the store technically still holds. See docs/07-distributed-architecture.md §6.
 

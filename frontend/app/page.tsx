@@ -9,7 +9,7 @@ export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (isAuthenticated === null) return; // still checking localStorage
+    if (isAuthenticated === null) return; // still waiting on the refresh-cookie bootstrap
     router.replace(isAuthenticated ? "/app" : "/login");
   }, [isAuthenticated, router]);
 

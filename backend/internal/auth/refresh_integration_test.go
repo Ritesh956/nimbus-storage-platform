@@ -66,7 +66,7 @@ func newTestAuthService(t *testing.T) *auth.Service {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	repo := auth.NewRepository(pool)
-	return auth.NewService(repo, rdb, "integration-test-secret-at-least-32-characters", 15*time.Minute, 7*24*time.Hour, nil, "http://localhost:3000", noopOrgCreator{})
+	return auth.NewService(repo, rdb, "integration-test-secret-at-least-32-characters", "", 15*time.Minute, 7*24*time.Hour, nil, "http://localhost:3000", noopOrgCreator{})
 }
 
 // noopOrgCreator satisfies auth.OrgCreator without pulling in the org

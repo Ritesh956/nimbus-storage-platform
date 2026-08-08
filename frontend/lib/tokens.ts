@@ -1,27 +1,18 @@
-// Tokens are kept in localStorage for simplicity — a known XSS-exposure
-// tradeoff vs. httpOnly cookies. A cookie-based flow would need this
-// Next.js app to proxy auth through its own route handlers (BFF pattern),
-// which is real added complexity; documented here as a deliberate
-// simplification for a demo-scale app, not an oversight.
-const ACCESS_KEY = "nimbus_access_token";
-const REFRESH_KEY = "nimbus_refresh_token";
+// The access token lives in memory only — not localStorage — so it can't be
+// read back out of storage after the fact by an injected script; it's lost
+// on reload and rehydrated via POST /api/auth/refresh (lib/api.ts), which
+// reads the httpOnly refresh cookie server-side. The refresh token itself
+// never reaches this module at all: app/api/auth/*'s route handlers set and
+// read it as an httpOnly, SameSite=Strict cookie the Next.js server proxies
+// through to the Go API — a browser-side XSS payload can no longer walk off
+// with a long-lived credential the way a localStorage-held refresh token
+// could (roadmap #1 / audit §04's single highest-leverage security fix).
+let accessToken: string | null = null;
 
 export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(ACCESS_KEY);
+  return accessToken;
 }
 
-export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(REFRESH_KEY);
-}
-
-export function setTokens(access: string, refresh: string) {
-  window.localStorage.setItem(ACCESS_KEY, access);
-  window.localStorage.setItem(REFRESH_KEY, refresh);
-}
-
-export function clearTokens() {
-  window.localStorage.removeItem(ACCESS_KEY);
-  window.localStorage.removeItem(REFRESH_KEY);
+export function setAccessToken(token: string | null) {
+  accessToken = token;
 }

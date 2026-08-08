@@ -17,6 +17,13 @@ spec:
         - name: nimbus-web
           image: {{ .Values.image.web }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Server-side-only: app/api/auth/*'s route handlers proxy to
+            # nimbus-api from inside this pod, where NEXT_PUBLIC_API_URL
+            # (baked in for the browser's own use) doesn't resolve — see
+            # lib/server/auth-proxy.ts.
+            - name: NIMBUS_API_INTERNAL_URL
+              value: "http://nimbus-api:8080"
           ports:
             - containerPort: 3000
           resources:

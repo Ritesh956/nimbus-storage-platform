@@ -7,8 +7,8 @@
 //	mark:  chunks referenced by no file version, pinned by no in-progress
 //	       upload session, and unseen by any dedup check for GCGrace are
 //	       flipped live -> doomed. Doomed chunks read as *missing* to the
-//	       dedup check (upload.Repository.CheckExistingChunks), so any new
-//	       upload of the same content re-sends the bytes and its commit
+//	       dedup check (upload.Repository.FindMissingChunksForOrg), so any
+//	       new upload of the same content re-sends the bytes and its commit
 //	       resurrects the chunk (UpsertGlobalChunk's conflict arm).
 //	sweep: chunks doomed for a further GCGrace are deleted for real — MinIO
 //	       objects first, then the chunks row — inside a per-chunk

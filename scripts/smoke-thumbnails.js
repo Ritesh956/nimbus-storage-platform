@@ -63,8 +63,10 @@ function makeTinyPNG() {
 async function uploadFile(access, folderId, name, content, mimeType) {
   const auth = { Authorization: `Bearer ${access}` };
   const hash = sha256(content);
-  await jf(`${BASE}/v1/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: [hash] }) });
   const { upload_id } = await jf(`${BASE}/v1/uploads`, { method: 'POST', headers: auth, body: JSON.stringify({ folder_id: folderId, name, size_bytes: content.length, mime_type: mimeType }) });
+  // Upload-scoped, not global (audit §05: proof-of-possession) — needs
+  // upload_id, so this runs after init now.
+  await jf(`${BASE}/v1/uploads/${upload_id}/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: [hash] }) });
   const { targets } = await jf(`${BASE}/v1/uploads/${upload_id}/chunks/${hash}/init`, { method: 'POST', headers: auth });
   const etags = {};
   for (const t of targets) {

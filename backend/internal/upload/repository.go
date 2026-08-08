@@ -57,34 +57,18 @@ func (r *Repository) GetByIdempotencyKey(ctx context.Context, createdBy, key str
 		createdBy, key))
 }
 
-// CheckExistingChunks returns which of hashes already exist in the global
-// content-addressed store — the dedup check behind POST /v1/chunks/check.
-//
-// The read doubles as a GC lease (docs/07-distributed-architecture.md §6):
-// telling a client "already stored, skip the upload" obligates us to keep
-// those bytes until the client's session plays out, so reporting a chunk
-// present also touches its last_seen_at — the sweeper won't doom a chunk
-// until it has been unreferenced AND unseen for the grace window. Doomed
-// chunks are deliberately reported missing: the client re-uploads the bytes
-// and the commit resurrects the chunk (see UpsertGlobalChunk).
-func (r *Repository) CheckExistingChunks(ctx context.Context, hashes []string) (map[string]bool, error) {
-	rows, err := r.pool.Query(ctx,
-		`UPDATE chunks SET last_seen_at = now() WHERE hash = ANY($1) AND gc_state = 'live' RETURNING hash`,
-		hashes)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	exists := make(map[string]bool, len(hashes))
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err != nil {
-			return nil, err
-		}
-		exists[h] = true
-	}
-	return exists, rows.Err()
+// RecordOrgChunkProof marks hash as legitimately possessed by org — called
+// only after a real CommitChunk succeeds (etags already verified against
+// actual replica PUTs), never from a dedup-check path alone. This is what
+// FindMissingChunksForOrg checks to tell "this org actually has these bytes"
+// apart from "this content merely exists somewhere in the cluster" (audit
+// §05, migration 000014_chunk_org_proof).
+func (r *Repository) RecordOrgChunkProof(ctx context.Context, orgID, hash string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO org_chunk_proofs (org_id, chunk_hash) VALUES ($1, $2)
+		 ON CONFLICT (org_id, chunk_hash) DO NOTHING`,
+		orgID, hash)
+	return err
 }
 
 // UpsertChunkAttemptPresigned records (or re-records, on a retried init)
@@ -152,21 +136,85 @@ func (r *Repository) UpsertChunkLocation(ctx context.Context, hash, nodeID strin
 	return err
 }
 
-// FindMissingChunks returns whichever of hashes do NOT exist in the global
-// chunk store — used to validate chunk_order at /complete. An empty result
-// means every hash is accounted for, whether committed in this upload or
-// deduped from a prior one.
-func (r *Repository) FindMissingChunks(ctx context.Context, hashes []string) ([]string, error) {
-	exists, err := r.CheckExistingChunks(ctx, hashes)
+// FindMissingChunksForOrg returns whichever of hashes org can't currently
+// claim — used both by POST /v1/uploads/{uploadId}/chunks/check (the dedup
+// hint, now upload-scoped rather than global — audit §05) and by /complete
+// to validate chunk_order. A hash counts as present only if it was
+// committed under this exact upload session (upload_chunks), or org has
+// proven it before (org_chunk_proofs) — mere global existence from some
+// OTHER org's upload is not enough on its own, which is what actually
+// closes the "attach via a leaked hash" gap. Content-addressed dedup at the
+// storage layer is untouched: a chunk this org genuinely re-uploads still
+// dedupes physically (UpsertGlobalChunk's conflict arm), it just always has
+// to prove it first.
+//
+// The read also renews the GC lease (docs/07-distributed-architecture.md
+// §6) for any hash it finds globally live, same as the CheckExistingChunks
+// touch this replaced: telling a client "you already have this" obligates
+// us to keep the bytes until the session plays out.
+func (r *Repository) FindMissingChunksForOrg(ctx context.Context, orgID, uploadID string, hashes []string) ([]string, error) {
+	// Hashes committed under this exact session don't need re-checking —
+	// UpsertGlobalChunk already renewed their GC lease at commit time.
+	rows, err := r.pool.Query(ctx,
+		`SELECT h FROM unnest($1::char(64)[]) AS h
+		 WHERE NOT EXISTS (
+		     SELECT 1 FROM upload_chunks
+		     WHERE upload_id = $2 AND chunk_hash = h AND state = 'committed'
+		 )`,
+		hashes, uploadID)
 	if err != nil {
 		return nil, err
 	}
+	var candidates []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
 	// Non-nil even when empty: a nil slice marshals to JSON `null`, not
 	// `[]`, which broke naive client-side `.length` checks on an
 	// all-deduped response.
 	missing := []string{}
-	for _, h := range hashes {
-		if !exists[h] {
+	if len(candidates) == 0 {
+		return missing, nil
+	}
+
+	proven, err := r.pool.Query(ctx,
+		`WITH touched AS (
+		     UPDATE chunks SET last_seen_at = now()
+		     WHERE hash = ANY($1) AND gc_state = 'live'
+		     RETURNING hash
+		 )
+		 SELECT t.hash FROM touched t
+		 JOIN org_chunk_proofs p ON p.chunk_hash = t.hash AND p.org_id = $2`,
+		candidates, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer proven.Close()
+
+	provenSet := make(map[string]bool, len(candidates))
+	for proven.Next() {
+		var h string
+		if err := proven.Scan(&h); err != nil {
+			return nil, err
+		}
+		provenSet[h] = true
+	}
+	if err := proven.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, h := range candidates {
+		if !provenSet[h] {
 			missing = append(missing, h)
 		}
 	}

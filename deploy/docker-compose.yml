@@ -119,6 +119,12 @@ services:
       dockerfile: deploy/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8080
+    environment:
+      # Server-side-only: app/api/auth/*'s route handlers proxy to nimbus-api
+      # from inside this container, where "localhost" (NEXT_PUBLIC_API_URL,
+      # baked in for the *browser's* use) doesn't resolve to it — same class
+      # of footgun as presigned MinIO URLs, see lib/server/auth-proxy.ts.
+      NIMBUS_API_INTERNAL_URL: http://nimbus-api:8080
     # Host 3010, not 3000 — this machine also runs an unrelated project's
     # native `next dev` on 3000; container-internal port is still 3000.
     ports: ["3010:3000"]

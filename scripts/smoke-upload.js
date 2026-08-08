@@ -34,16 +34,18 @@ async function uploadFile(access, folderId, name, content) {
   const hashes = chunks.map(sha256);
   const auth = { Authorization: `Bearer ${access}` };
 
-  const { missing } = await jsonFetch(`${BASE}/v1/chunks/check`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ hashes }),
-  });
-  console.log(`  chunks: ${chunks.length} total, ${missing.length} missing (${chunks.length - missing.length} deduped)`);
-
   const { upload_id } = await jsonFetch(`${BASE}/v1/uploads`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({ folder_id: folderId, name, size_bytes: content.length, mime_type: 'application/octet-stream' }),
   });
   console.log(`  upload session: ${upload_id}`);
+
+  // Upload-scoped, not global (audit §05: proof-of-possession) — needs
+  // upload_id, so this runs after init now.
+  const { missing } = await jsonFetch(`${BASE}/v1/uploads/${upload_id}/chunks/check`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ hashes }),
+  });
+  console.log(`  chunks: ${chunks.length} total, ${missing.length} missing (${chunks.length - missing.length} deduped)`);
 
   const missingSet = new Set(missing);
   for (let i = 0; i < chunks.length; i++) {

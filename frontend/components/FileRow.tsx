@@ -4,6 +4,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
+import { assembleFromPlan, saveBlob } from "@/lib/download";
 import { useModal } from "@/lib/useModal";
 import { Button } from "./ui/Button";
 import { Checkbox } from "./ui/Checkbox";
@@ -154,9 +155,8 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
   }
 
   // Reassembles the file client-side from the download plan's presigned
-  // chunk URLs (docs/06-api-design.md §6) — the same primary+fallback
-  // logic the smoke tests exercise, just triggered by a click instead of
-  // a script.
+  // chunk URLs (docs/06-api-design.md §6) — same hash-verified
+  // primary+fallback walk the share page's downloads use (lib/download.ts).
   async function download() {
     setBusy(true);
     setError(null);
@@ -164,27 +164,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
       const vs = versions ?? (await api.files.versions(fileId));
       if (!vs.length) throw new Error("no versions to download");
       const plan = await api.files.downloadPlan(fileId, vs[0].id);
-      const parts: BlobPart[] = [];
-      for (const chunk of [...plan.chunks].sort((a, b) => a.sequence - b.sequence)) {
-        let ok = false;
-        for (const url of chunk.targets) {
-          const res = await fetch(url);
-          if (res.ok) {
-            parts.push(await res.blob());
-            ok = true;
-            break;
-          }
-        }
-        if (!ok) throw new Error(`could not fetch chunk ${chunk.sequence} from any replica`);
-      }
-      const blobUrl = URL.createObjectURL(new Blob(parts));
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
+      saveBlob(await assembleFromPlan(plan), name);
     } catch (err) {
       setError(err instanceof Error ? err.message : "download failed");
     } finally {

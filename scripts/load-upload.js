@@ -1,6 +1,6 @@
 // Day 12 deliverable (docs/09-roadmap.md): k6 load test proving NFR-2
 // (>=50 concurrent uploads). Drives the real chunked-upload flow
-// (chunks/check -> init upload -> chunk init -> presigned PUT -> commit ->
+// (init upload -> chunks/check -> chunk init -> presigned PUT -> commit ->
 // complete) per virtual user, not a coarser proxy endpoint, so it actually
 // exercises FR-6..9 under concurrency.
 //
@@ -96,16 +96,18 @@ export default function (data) {
   const hash = crypto.sha256(buf, 'hex');
   const name = `k6-load-${__VU}-${__ITER}-${Date.now()}.bin`;
 
-  let res = http.post(`${BASE}/v1/chunks/check`, JSON.stringify({ hashes: [hash] }), auth);
-  ok = check(res, { 'chunks/check 200': (r) => r.status === 200 }) && ok;
-
-  res = http.post(
+  let res = http.post(
     `${BASE}/v1/uploads`,
     JSON.stringify({ folder_id: data.folderId, name, size_bytes: buf.byteLength, mime_type: 'application/octet-stream' }),
     auth,
   );
   ok = check(res, { 'init upload 201': (r) => r.status === 201 }) && ok;
   const uploadId = res.json('upload_id');
+
+  // Upload-scoped, not global (audit §05: proof-of-possession) — needs
+  // uploadId, so this runs after init now.
+  res = http.post(`${BASE}/v1/uploads/${uploadId}/chunks/check`, JSON.stringify({ hashes: [hash] }), auth);
+  ok = check(res, { 'chunks/check 200': (r) => r.status === 200 }) && ok;
 
   res = http.post(`${BASE}/v1/uploads/${uploadId}/chunks/${hash}/init`, null, auth);
   ok = check(res, { 'chunk init 200': (r) => r.status === 200 }) && ok;

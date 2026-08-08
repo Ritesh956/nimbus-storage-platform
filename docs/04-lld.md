@@ -139,6 +139,7 @@ func (s *UploadService) CommitChunk(ctx context.Context, uploadID string, hash s
 - Refresh token: opaque random 256-bit token, stored hashed (SHA-256) in Postgres with `family_id`, `used_at`, `expires_at`.
 - **Rotation on use**: every refresh call issues a new refresh token in the same `family_id` and marks the old one `used_at`. If a refresh token with a non-null `used_at` is presented again, the entire `family_id` is revoked — this is the standard reuse-detection pattern for stolen refresh tokens, worth calling out explicitly since it's a common interview follow-up ("what if a refresh token is stolen and replayed?").
 - Access-token revocation before natural expiry (e.g. logout) is handled by a short Redis blacklist keyed on `jti`, TTL'd to the token's remaining lifetime — bounded set size since entries expire with the token anyway.
+- **Secret rotation (§03/§04/§05 audit-fix session, item 31)**: `NIMBUS_JWT_SECRET_PREVIOUS` (optional) lets `tokenIssuer.verify` fall back to a just-rotated-out secret for any still-live access token, so rotating `NIMBUS_JWT_SECRET` no longer instantly invalidates every session cluster-wide — new tokens always issue under the current secret regardless.
 
 ## 4. Middleware chain (HTTP layer, applied in order)
 

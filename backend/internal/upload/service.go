@@ -99,11 +99,15 @@ func NewService(repo *Repository, router *storage.Router, files FileCreator, fol
 	}
 }
 
-// CheckChunks is the dedup check: given content hashes the client is about
-// to chunk-and-upload, return which ones the store doesn't have yet
-// (FR-7 — dedup is global, across users, so this needs no org scoping).
-func (s *Service) CheckChunks(ctx context.Context, hashes []string) ([]string, error) {
-	return s.repo.FindMissingChunks(ctx, hashes)
+// CheckChunks is the dedup check for an already-created upload session:
+// given content hashes the client is about to chunk-and-upload, return
+// which ones u's org still needs to actually PUT. Physical storage dedup
+// stays global (FR-7) — this only decides what the *client* gets to skip,
+// and it's scoped per-org (audit §05: proof-of-possession) rather than
+// "does this content exist anywhere," which let a bare leaked hash attach
+// to another org's bytes at /complete with nothing ever uploaded.
+func (s *Service) CheckChunks(ctx context.Context, u Upload, hashes []string) ([]string, error) {
+	return s.repo.FindMissingChunksForOrg(ctx, u.OrgID, u.ID, hashes)
 }
 
 // InitUpload creates an upload session, after checking authorization.
@@ -271,6 +275,14 @@ func (s *Service) CommitChunk(ctx context.Context, u Upload, hash string, sizeBy
 			return err
 		}
 	}
+	// Etags just verified above prove u.OrgID's caller genuinely PUT this
+	// content — record that proof so a future CheckChunks/complete for this
+	// org can trust the global dedup entry instead of re-uploading (audit
+	// §05: this is what makes cross-org dedup available again, but only to
+	// an org that has actually earned it once).
+	if err := s.repo.RecordOrgChunkProof(ctx, u.OrgID, hash); err != nil {
+		return err
+	}
 	metrics.UploadChunksCommittedTotal.Inc()
 	metrics.UploadBytesCommittedTotal.Add(float64(sizeBytes))
 	return nil
@@ -304,7 +316,7 @@ func (s *Service) CompleteUpload(ctx context.Context, u Upload, idempotencyKey s
 	if err := s.checkQuota(ctx, u.OrgID, sizeBytes); err != nil {
 		return "", "", err
 	}
-	missing, err := s.repo.FindMissingChunks(ctx, chunkOrder)
+	missing, err := s.repo.FindMissingChunksForOrg(ctx, u.OrgID, u.ID, chunkOrder)
 	if err != nil {
 		return "", "", err
 	}

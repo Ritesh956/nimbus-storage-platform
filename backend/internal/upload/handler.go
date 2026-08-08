@@ -24,13 +24,18 @@ type checkChunksRequest struct {
 	Hashes []string `json:"hashes"`
 }
 
+// CheckChunks is upload-scoped (POST /v1/uploads/{uploadId}/chunks/check,
+// behind RequireAccess) rather than a bare global lookup — the dedup check
+// needs the upload's org to answer "what does *this org* still need to
+// upload" (audit §05: proof-of-possession, upload.Service.CheckChunks).
 func (h *Handler) CheckChunks(w http.ResponseWriter, r *http.Request) {
+	u, _ := UploadFromContext(r.Context())
 	var req checkChunksRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpserver.WriteError(w, r, httpserver.ErrInvalid, "malformed JSON body")
 		return
 	}
-	missing, err := h.svc.CheckChunks(r.Context(), req.Hashes)
+	missing, err := h.svc.CheckChunks(r.Context(), u, req.Hashes)
 	if err != nil {
 		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to check chunks")
 		return

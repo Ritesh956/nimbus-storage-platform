@@ -49,8 +49,8 @@ func wireUpload(
 	uploadHandler := upload.NewHandler(uploadSvc)
 	requireUploadAccess := upload.RequireAccess(uploadRepo, members)
 
-	mux.Handle("POST /v1/chunks/check", requireAuth(http.HandlerFunc(uploadHandler.CheckChunks)))
 	mux.Handle("POST /v1/uploads", requireAuth(http.HandlerFunc(uploadHandler.InitUpload)))
+	mux.Handle("POST /v1/uploads/{uploadId}/chunks/check", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.CheckChunks))))
 	mux.Handle("POST /v1/uploads/{uploadId}/chunks/{hash}/init", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.InitChunk))))
 	mux.Handle("POST /v1/uploads/{uploadId}/chunks/{hash}/commit", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.CommitChunk))))
 	mux.Handle("POST /v1/uploads/{uploadId}/complete", requireAuth(requireUploadAccess(http.HandlerFunc(uploadHandler.Complete))))

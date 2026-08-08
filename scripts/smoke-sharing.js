@@ -30,8 +30,10 @@ async function registerAndLogin(email) {
 async function uploadSmallFile(access, folderId, name, content) {
   const auth = { Authorization: `Bearer ${access}` };
   const hash = sha256(content);
-  await jsonFetchOk(`${BASE}/v1/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: [hash] }) });
   const { upload_id } = await jsonFetchOk(`${BASE}/v1/uploads`, { method: 'POST', headers: auth, body: JSON.stringify({ folder_id: folderId, name, size_bytes: content.length, mime_type: 'text/plain' }) });
+  // Upload-scoped, not global (audit §05: proof-of-possession) — needs
+  // upload_id, so this runs after init now.
+  await jsonFetchOk(`${BASE}/v1/uploads/${upload_id}/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: [hash] }) });
   const { targets } = await jsonFetchOk(`${BASE}/v1/uploads/${upload_id}/chunks/${hash}/init`, { method: 'POST', headers: auth });
   const etags = {};
   for (const t of targets) {

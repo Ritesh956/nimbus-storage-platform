@@ -2,10 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api } from "./api";
-import { clearTokens, getRefreshToken } from "./tokens";
 
 interface AuthContextValue {
-  // null = not yet determined (first render, before we've checked storage)
+  // null = not yet determined (first render, before the refresh-cookie bootstrap resolves)
   isAuthenticated: boolean | null;
   // Resolves with a challenge when the account has TOTP enabled; the login
   // page then collects a code and calls totpLogin to finish.
@@ -21,16 +20,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Presence of a refresh token is "was logged in" — the access token
-    // itself may have expired, but lib/api.ts's request() transparently
-    // refreshes on the first 401, so this is a safe proxy for auth state.
-    // localStorage doesn't exist during SSR, so this genuinely can't be a
-    // useState lazy initializer (that would read window on the server and
-    // either throw or desync from the client's hydration pass) — the
-    // standard "resolve client-only state after mount" pattern, hence the
-    // deliberate one-time setState-in-effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsAuthenticated(!!getRefreshToken());
+    // The refresh token lives in an httpOnly cookie now (roadmap #1) — this
+    // module can no longer just check localStorage for "was logged in".
+    // Instead it makes the same call request()'s 401 handler would: hit
+    // /api/auth/refresh, which reads the cookie server-side and, if it's
+    // valid, hands back a fresh access token to hold in memory. A cancelled
+    // flag guards against a slow response landing after unmount (React 18
+    // strict-mode double-invokes effects in dev).
+    let cancelled = false;
+    api.auth
+      .bootstrap()
+      .then(() => {
+        if (!cancelled) setIsAuthenticated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsAuthenticated(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -50,9 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      // api.auth.logout()'s own finally clears the in-memory access token
+      // even if the network call itself fails — nothing left to do here.
       await api.auth.logout();
     } catch {
-      clearTokens();
+      // best-effort — see above
     }
     setIsAuthenticated(false);
   }, []);

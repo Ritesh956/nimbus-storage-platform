@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type StorageNode struct {
@@ -29,7 +30,16 @@ type Config struct {
 	RedisAddr   string
 	NATSURL     string
 
-	JWTSecret          string
+	JWTSecret string
+	// JWTSecretPrevious lets an access token signed under a just-rotated-out
+	// secret keep verifying until it naturally expires (≤AccessTokenTTL,
+	// 15min by default) — without it, rotating NIMBUS_JWT_SECRET (the audit's
+	// §04 gap: one static secret, no rotation path) instantly invalidates
+	// every live access token cluster-wide, forcing a synchronized re-login.
+	// Empty disables the fallback entirely (the pre-rotation-support
+	// behavior). Only auth.Service.VerifyAccessToken/PeekUserID ever try it;
+	// new tokens are always issued under JWTSecret.
+	JWTSecretPrevious  string
 	AccessTokenTTL     time.Duration
 	RefreshTokenTTL    time.Duration
 	TrashRetentionDays int
@@ -110,6 +120,7 @@ func Load() (Config, error) {
 		RedisAddr:           getEnv("NIMBUS_REDIS_ADDR", "localhost:6379"),
 		NATSURL:             getEnv("NIMBUS_NATS_URL", "nats://localhost:4222"),
 		JWTSecret:           os.Getenv("NIMBUS_JWT_SECRET"),
+		JWTSecretPrevious:   os.Getenv("NIMBUS_JWT_SECRET_PREVIOUS"),
 		SMTPAddr:            os.Getenv("NIMBUS_SMTP_ADDR"),
 		SMTPFrom:            getEnv("NIMBUS_SMTP_FROM", "no-reply@nimbus.dev"),
 		WebBaseURL:          getEnv("NIMBUS_WEB_BASE_URL", "http://localhost:3000"),
@@ -264,6 +275,9 @@ func (c Config) validate() error {
 	} else if len(c.JWTSecret) < 32 {
 		return fmt.Errorf("NIMBUS_JWT_SECRET: must be at least 32 characters")
 	}
+	if c.JWTSecretPrevious != "" && len(c.JWTSecretPrevious) < 32 {
+		return fmt.Errorf("NIMBUS_JWT_SECRET_PREVIOUS: must be at least 32 characters")
+	}
 	if len(c.StorageNodes) > 0 {
 		if c.MinIOAccessKey == "" {
 			missing = append(missing, "NIMBUS_MINIO_ACCESS_KEY")
@@ -277,8 +291,8 @@ func (c Config) validate() error {
 	}
 	if c.AdminPassword == "" {
 		missing = append(missing, "NIMBUS_ADMIN_PASSWORD")
-	} else if len(c.AdminPassword) < 8 {
-		return fmt.Errorf("NIMBUS_ADMIN_PASSWORD: must be at least 8 characters")
+	} else if err := validateAdminPassword(c.AdminPassword); err != nil {
+		return err
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))
@@ -291,6 +305,41 @@ func (c Config) validate() error {
 	}
 	if c.LoginRateLimitRPS > 0 && c.LoginRateLimitBurst < 1 {
 		return fmt.Errorf("NIMBUS_LOGIN_RATE_LIMIT_BURST must be at least 1 when login rate limiting is enabled")
+	}
+	return nil
+}
+
+// validateAdminPassword holds the seeded platform-admin credential
+// (auth.Repository.EnsureSeededAdmin) to a higher bar than the ≥8-character
+// check applied to regular user signup passwords (auth.Handler.Register) —
+// this one account has cluster-wide /v1/admin/* access, so a short or
+// low-entropy value shouldn't be able to stand in as its real credential
+// (audit §04).
+func validateAdminPassword(pw string) error {
+	if len(pw) < 12 {
+		return fmt.Errorf("NIMBUS_ADMIN_PASSWORD: must be at least 12 characters")
+	}
+	var hasUpper, hasLower, hasDigit, hasSymbol bool
+	for _, r := range pw {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		default:
+			hasSymbol = true
+		}
+	}
+	classes := 0
+	for _, ok := range []bool{hasUpper, hasLower, hasDigit, hasSymbol} {
+		if ok {
+			classes++
+		}
+	}
+	if classes < 3 {
+		return fmt.Errorf("NIMBUS_ADMIN_PASSWORD: must contain at least 3 of: uppercase, lowercase, digit, symbol")
 	}
 	return nil
 }

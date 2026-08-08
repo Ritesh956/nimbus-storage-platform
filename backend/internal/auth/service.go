@@ -40,11 +40,11 @@ type Service struct {
 	orgs       OrgCreator
 }
 
-func NewService(repo *Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration, mailer Mailer, webBaseURL string, orgs OrgCreator) *Service {
+func NewService(repo *Repository, redisClient *redis.Client, jwtSecret, jwtSecretPrevious string, accessTTL, refreshTTL time.Duration, mailer Mailer, webBaseURL string, orgs OrgCreator) *Service {
 	return &Service{
 		repo:       repo,
 		redis:      redisClient,
-		issuer:     newTokenIssuer(jwtSecret, accessTTL),
+		issuer:     newTokenIssuer(jwtSecret, jwtSecretPrevious, accessTTL),
 		refreshTTL: refreshTTL,
 		mailer:     mailer,
 		webBaseURL: strings.TrimRight(webBaseURL, "/"),

@@ -69,12 +69,14 @@ async function uploadFile(access, folderId, name, content) {
   const hashes = chunks.map(sha256);
   const auth = { Authorization: `Bearer ${access}` };
 
-  const { missing } = await jsonFetch(`${BASE}/v1/chunks/check`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ hashes }),
-  });
   const { upload_id } = await jsonFetch(`${BASE}/v1/uploads`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({ folder_id: folderId, name, size_bytes: content.length, mime_type: 'application/octet-stream' }),
+  });
+  // Upload-scoped, not global (audit §05: proof-of-possession) — needs
+  // upload_id, so this runs after init now.
+  const { missing } = await jsonFetch(`${BASE}/v1/uploads/${upload_id}/chunks/check`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ hashes }),
   });
 
   const missingSet = new Set(missing);
@@ -151,7 +153,13 @@ async function main() {
   ok('unreferenced chunks doomed after the grace window');
 
   // ---- 3. doomed chunks are invisible to dedup
-  const { missing } = await jsonFetch(`${BASE}/v1/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: a.hashes }) });
+  // A throwaway upload session just to scope the check (audit §05: dedup
+  // check is per-upload/org now, not a bare global lookup).
+  const { upload_id: checkUploadId } = await jsonFetch(`${BASE}/v1/uploads`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ folder_id: folderId, name: 'gc-doom-check.bin', size_bytes: content.length, mime_type: 'application/octet-stream' }),
+  });
+  const { missing } = await jsonFetch(`${BASE}/v1/uploads/${checkUploadId}/chunks/check`, { method: 'POST', headers: auth, body: JSON.stringify({ hashes: a.hashes }) });
   if (missing.length !== a.hashes.length) fail(`dedup check reported ${a.hashes.length - missing.length} doomed chunks as present`);
   ok('doomed chunks read as missing to the dedup check');
 

@@ -1,4 +1,4 @@
-import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "./tokens";
+import { getAccessToken, setAccessToken } from "./tokens";
 import type {
   ActivityEvent,
   ChunkTarget,
@@ -32,25 +32,53 @@ export class ApiError extends Error {
   }
 }
 
-// Concurrent 401s must not each trigger their own refresh call (that would
-// race two rotations against the same refresh token and lose one) — every
-// caller awaits the same in-flight refresh.
+// localPost calls this Next.js app's own app/api/auth/* route handlers
+// (same-origin, so the browser sends the httpOnly refresh cookie
+// automatically — no explicit credentials option needed) rather than the Go
+// API directly. Those routes are the only place the refresh token is ever
+// handled; this client only ever sees the access token they hand back.
+async function localPost<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) {
+    const err = data?.error ?? {};
+    throw new ApiError(res.status, err.code ?? "internal", err.message ?? "request failed");
+  }
+  return data as T;
+}
+
+// Concurrent refresh attempts must not each trigger their own call — that
+// races two rotations against the same refresh token, and the loser's reuse
+// of an already-rotated token revokes the whole family server-side
+// (auth.Repository.RotateRefreshToken), killing the session outright. The
+// guard lives inside refresh() itself, not at each call site, specifically
+// because AuthProvider's mount-time bootstrap() call and request()'s 401
+// handler both call this and don't share a call site — React 18 Strict Mode
+// double-invoking that mount effect in dev reproduces the race on every
+// single page load otherwise.
 let refreshPromise: Promise<void> | null = null;
 
-async function refresh(): Promise<void> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) throw new ApiError(401, "unauthorized", "not logged in");
-  const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!res.ok) {
-    clearTokens();
-    throw new ApiError(res.status, "unauthorized", "session expired");
+function refresh(): Promise<void> {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const body = await localPost<{ access_token: string }>("/api/auth/refresh");
+        setAccessToken(body.access_token);
+      } catch (err) {
+        setAccessToken(null);
+        throw err;
+      }
+    })().finally(() => {
+      refreshPromise = null;
+    });
   }
-  const body = await res.json();
-  setTokens(body.access_token, body.refresh_token);
+  return refreshPromise;
 }
 
 async function request<T>(path: string, opts: RequestInit = {}, retry = true): Promise<T> {
@@ -63,11 +91,16 @@ async function request<T>(path: string, opts: RequestInit = {}, retry = true): P
 
   const res = await fetch(`${BASE_URL}${path}`, { ...opts, headers });
 
-  if (res.status === 401 && retry && getRefreshToken()) {
-    refreshPromise ??= refresh().finally(() => {
-      refreshPromise = null;
-    });
-    await refreshPromise;
+  // Unlike the old localStorage-backed refresh token, an httpOnly cookie
+  // can't be checked client-side before deciding whether refreshing is
+  // worth attempting — a logged-out caller just pays one cheap 401
+  // round-trip to /api/auth/refresh instead.
+  if (res.status === 401 && retry) {
+    try {
+      await refresh();
+    } catch {
+      throw new ApiError(401, "unauthorized", "not logged in");
+    }
     return request<T>(path, opts, false);
   }
 
@@ -93,26 +126,32 @@ export const api = {
       }),
     // Login is two-step when the account has TOTP enabled: the first call
     // returns a challenge instead of tokens, and totpLogin finishes it.
+    // Both go through this app's own /api/auth/* proxy (not request(), which
+    // always targets the Go API directly) so the refresh token in the
+    // response never touches this module — see app/api/auth/login/route.ts.
     login: async (email: string, password: string): Promise<{ totpRequired: boolean; challengeToken?: string }> => {
-      const body = await request<{
+      const body = await localPost<{
         access_token?: string;
-        refresh_token?: string;
         totp_required?: boolean;
         challenge_token?: string;
-      }>("/v1/auth/login", { method: "POST", body: json({ email, password }) });
+      }>("/api/auth/login", { email, password });
       if (body.totp_required) {
         return { totpRequired: true, challengeToken: body.challenge_token };
       }
-      setTokens(body.access_token!, body.refresh_token!);
+      setAccessToken(body.access_token!);
       return { totpRequired: false };
     },
     totpLogin: async (challengeToken: string, code: string) => {
-      const body = await request<{ access_token: string; refresh_token: string }>("/v1/auth/login/totp", {
-        method: "POST",
-        body: json({ challenge_token: challengeToken, code }),
+      const body = await localPost<{ access_token: string }>("/api/auth/login/totp", {
+        challenge_token: challengeToken,
+        code,
       });
-      setTokens(body.access_token, body.refresh_token);
+      setAccessToken(body.access_token);
     },
+    // bootstrap rehydrates an access token from the httpOnly refresh cookie
+    // on a cold page load — the only way lib/auth-context.tsx can tell
+    // "was I logged in?" now that the refresh token isn't JS-readable.
+    bootstrap: () => refresh(),
     forgotPassword: (email: string) =>
       request<void>("/v1/auth/password/forgot", { method: "POST", body: json({ email }) }),
     resetPassword: (token: string, password: string) =>
@@ -123,11 +162,14 @@ export const api = {
     totpConfirm: (code: string) => request<void>("/v1/auth/totp/confirm", { method: "POST", body: json({ code }) }),
     totpDisable: (code: string) => request<void>("/v1/auth/totp", { method: "DELETE", body: json({ code }) }),
     logout: async () => {
-      const refreshToken = getRefreshToken();
+      const access = getAccessToken();
       try {
-        await request("/v1/auth/logout", { method: "POST", body: json({ refresh_token: refreshToken }) });
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: access ? { Authorization: `Bearer ${access}` } : undefined,
+        });
       } finally {
-        clearTokens();
+        setAccessToken(null);
       }
     },
   },
@@ -205,8 +247,14 @@ export const api = {
   },
 
   uploads: {
-    checkChunks: (hashes: string[]) =>
-      request<{ missing: string[] }>("/v1/chunks/check", { method: "POST", body: json({ hashes }) }),
+    // Upload-scoped (audit §05: proof-of-possession) — call after init, not
+    // before; the server needs the upload's org to answer "what does *this
+    // org* still need to upload".
+    checkChunks: (uploadId: string, hashes: string[]) =>
+      request<{ missing: string[] }>(`/v1/uploads/${uploadId}/chunks/check`, {
+        method: "POST",
+        body: json({ hashes }),
+      }),
     init: (params: { folderId?: string; fileId?: string; name?: string; sizeBytes: number; mimeType: string }) =>
       request<{ upload_id: string }>("/v1/uploads", {
         method: "POST",

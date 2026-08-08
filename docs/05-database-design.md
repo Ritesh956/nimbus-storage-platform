@@ -251,9 +251,22 @@ Two self-contained auth-owned tables, both `ON DELETE CASCADE` off `users`. `pas
 
 `ALTER TYPE member_role ADD VALUE 'admin'` — the delegated org-governance tier (owner > admin > member; bounds enforced in `org.Service`, see docs/06-api-design.md §3). The down migration demotes admins to members and rebuilds the two-value type, since Postgres can't drop an enum value in place.
 
+### 2.10 Migration 000014 — per-org chunk proofs (audit §05, proof-of-possession)
+
+```sql
+CREATE TABLE org_chunk_proofs (
+    org_id     uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    chunk_hash char(64) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, chunk_hash)
+);
+```
+
+Closes a real gap the pre-deployment audit flagged and §3 below used to describe as an accepted trade-off: because `chunks` is global with no proof-of-possession check, a hash learned out-of-band (a leaked log line, say) was enough for any org to reference another org's bytes at `/complete` without ever uploading them. A row here means "this org's `CommitChunk` call, with etags already verified against real replica PUTs, proved they have these bytes" — `upload.Repository.FindMissingChunksForOrg` now requires either that proof or a commit under the *current* upload session before a hash counts as present, for both the dedup-check endpoint and `/complete`'s validation. Physical storage dedup is untouched (`chunks`/`UpsertGlobalChunk` stay global, so identical bytes are still never stored twice) — what changed is that skipping the *upload* now requires this org to have earned it once, not just that the content exists somewhere.
+
 ## 3. Design notes
 
-- **Dedup correctness**: `chunks` is global (not per-org) — the interesting claim ("dedup across users at the chunk level," SRS FR-7) lives entirely in `file_version_chunks` mapping many versions/files/orgs to the same `chunks.hash`. Deleting a file never deletes a `chunks` row directly; a chunk becomes eligible for physical GC when no `file_version_chunks` row references it. ~~Documented as a manual/roadmap job per SRS §4, not automated in v1~~ — **automated in the Tier 3 session (backlog #10)**: `nimbus-worker` runs a mark/sweep collector with a dedup-lease + resurrection protocol, see docs/07-distributed-architecture.md §6.
+- **Dedup correctness**: `chunks` is global (not per-org) — the interesting claim ("dedup across users at the chunk level," SRS FR-7) lives entirely in `file_version_chunks` mapping many versions/files/orgs to the same `chunks.hash`. Deleting a file never deletes a `chunks` row directly; a chunk becomes eligible for physical GC when no `file_version_chunks` row references it. ~~Documented as a manual/roadmap job per SRS §4, not automated in v1~~ — **automated in the Tier 3 session (backlog #10)**: `nimbus-worker` runs a mark/sweep collector with a dedup-lease + resurrection protocol, see docs/07-distributed-architecture.md §6. **Client-visible dedup (whether a client gets to skip re-uploading) is per-org since migration 000014** (`org_chunk_proofs`) — physical storage dedup itself stays global.
 - **Trash/restore** (FR-11) is `deleted_at` soft-delete on `folders`/`files`; restore clears it. Permanent deletion is explicit purge (`DELETE /v1/files/{fileId}/purge`) **or, since the Tier 3 session (backlog #11), the retention-window auto-purge in `nimbus-worker`'s GC tick** — `NIMBUS_TRASH_RETENTION_DAYS` (default 30) is now actually enforced, closing what this doc previously flagged as an unbuilt claim. Expired folders are guarded by a subtree liveness check before their cascading hard-delete (see `folder.Repository.PurgeExpiredTrash`).
 - **Why a `chunk_locations` join table instead of an array column on `chunks`**: needs to be queried from the `storage_nodes` side too (`GET /v1/admin/nodes`), and needs its own `status` for the degraded-replica case after a failover — an array on `chunks` can't represent that cleanly.
 - **Search** (FR-15/16) uses Postgres full-text (`tsvector`/GIN) on file name only for v1 — sufficient at this scale; a dedicated search engine (Elasticsearch/Meilisearch) is a roadmap item if fielded search grows beyond name/type/date/size filters.
