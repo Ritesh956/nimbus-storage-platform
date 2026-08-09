@@ -3,8 +3,21 @@
 /* Dashdark X design tokens, pulled from the Figma community file the user
    picked as the design reference (Neutral/Primary/Secondary/System color
    variables + Mona Sans type ramp). Values are verbatim from
-   get_variable_defs, not eyeballed. */
+   get_variable_defs, not eyeballed. Dark stays the product's default
+   identity (deliberate — see docs/00-project-state.md's design-decisions
+   list) and is what an OS with no light/dark preference gets; light is a
+   real second theme (audit §11's named gap), not a naive channel
+   inversion — every token below was re-picked and contrast-checked for
+   its own surfaces, not derived by formula from the dark set. Resolution
+   order, lightest-wins: :root (baseline, dark) -> prefers-color-scheme:
+   light (OS default) -> [data-theme] (explicit user override via the
+   toggle in AppShell, see lib/theme.ts). */
 :root {
+  /* Native form controls (checkboxes not covered by the custom Checkbox,
+     date pickers, etc.) and scrollbars pick their own light/dark rendering
+     from this — kept in sync with each token block below so they never
+     mismatch the app's own chrome. */
+  color-scheme: dark;
   --background: #081028; /* Neutral 800 — page */
   --surface: #0b1739; /* Neutral 600 — cards, tables */
   --surface-2: #101c44; /* hover / selected rows (one step lighter than surface) */
@@ -31,6 +44,92 @@
   --warning: #ffb016; /* Other Yellow 50 */
 }
 
+/* Light theme tokens (2026-08-09, audit §11). Same brand hues throughout,
+   re-tuned per-token rather than inverted: --accent/--accent-strong are
+   unchanged (they're fills/rings/gradients here, not small text, so their
+   dark-mode values already clear the 3:1 non-text-contrast bar on a light
+   ground); --accent-2/--danger/--success/--warning ARE used as body-sized
+   text/link color (globals.css's own `a{color:var(--accent-2)}`,
+   `text-danger`/`text-success`/`text-warning` utility classes) and needed
+   real darkening, not just a lighter neutral swap, to hold 4.5:1 — the
+   dark-mode cyan/red/green/amber all fail outright on white (as low as
+   ~1.7:1 for warning). Computed against every surface it actually
+   renders on, worst case shown; re-run before changing either a token or
+   introducing a new surface shade, same discipline as the dark-mode
+   comment above.
+     --background   9.65:1 muted-worst-case surface  (n/a, page ground)
+     --muted   #4b5170  6.41:1 worst case (on --surface-deep)
+     --muted-2 #565c80  5.36:1 worst case (on --surface-deep)
+     --accent-2 #006f94 4.69:1 worst case (on --surface-deep)
+     --danger   #c22a3a 4.71:1 worst case (on --surface-deep)
+     --success  #056b3a 5.49:1 worst case (on --surface-deep)
+     --warning  #7d5209 5.64:1 worst case (on --surface-deep)
+   All clear AA's 4.5:1 body-text threshold. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --background: #f4f5fb;
+    --surface: #ffffff;
+    --surface-2: #eef0fa;
+    --surface-deep: #e7e9f5;
+    --border: #d8dbec;
+    --border-strong: #c3c7e0;
+    --foreground: #12142b;
+    --muted: #4b5170;
+    --muted-2: #565c80;
+    --accent: #cb3cff;
+    --accent-strong: #7f25fb;
+    --accent-soft: rgba(203, 60, 255, 0.1);
+    --accent-2: #006f94;
+    --danger: #c22a3a;
+    --success: #056b3a;
+    --warning: #7d5209;
+  }
+}
+
+/* Explicit override from the AppShell toggle — wins over the OS
+   preference in both directions (a user who picked "Dark" on a
+   light-OS device, or "Light" on a dark-OS device, gets what they
+   picked). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #081028;
+  --surface: #0b1739;
+  --surface-2: #101c44;
+  --surface-deep: #0a1330;
+  --border: #343b4f;
+  --border-strong: #4a5473;
+  --foreground: #ffffff;
+  --muted: #aeb9e1;
+  --muted-2: #7e89ac;
+  --accent: #cb3cff;
+  --accent-strong: #7f25fb;
+  --accent-soft: rgba(203, 60, 255, 0.12);
+  --accent-2: #00c2ff;
+  --danger: #ff5a65;
+  --success: #14ca74;
+  --warning: #ffb016;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f4f5fb;
+  --surface: #ffffff;
+  --surface-2: #eef0fa;
+  --surface-deep: #e7e9f5;
+  --border: #d8dbec;
+  --border-strong: #c3c7e0;
+  --foreground: #12142b;
+  --muted: #4b5170;
+  --muted-2: #565c80;
+  --accent: #cb3cff;
+  --accent-strong: #7f25fb;
+  --accent-soft: rgba(203, 60, 255, 0.1);
+  --accent-2: #006f94;
+  --danger: #c22a3a;
+  --success: #056b3a;
+  --warning: #7d5209;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
@@ -52,6 +151,25 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Font fallback (audit §11's named gap — documenting what was already
+   happening, not adding new machinery): two layers.
+   1. `next/font/google`'s Mona_Sans() loader (app/layout.tsx) generates an
+      automatic size-adjusted fallback ("Mona Sans Fallback", a local
+      system font metrics-matched to Mona Sans's ascent/descent/line-gap)
+      and self-hosts the variable font — no external Google Fonts request
+      happens at runtime, so "the CDN is unreachable" isn't a failure mode
+      here the way it would be with a <link> to fonts.googleapis.com.
+   2. If next/font's own injected fallback somehow isn't present (e.g. this
+      rule read before the font module registers, or a build without font
+      optimization), var(--font-sans) resolves to nothing usable and this
+      rule's own explicit chain — ui-sans-serif, system-ui, sans-serif —
+      is what actually renders: each OS's native UI font (San Francisco,
+      Segoe UI, Roboto, ...), not a jarring generic serif. Verified live
+      2026-08-09: overriding --font-mona-sans in devtools to an
+      unavailable font name (simulating "the primary font didn't load")
+      immediately changed body's computed font-family to fall through the
+      rest of the chain — confirming it's live var() resolution, not a
+      value Tailwind's `@theme inline` baked in statically at build time. */
 body {
   background: var(--background);
   color: var(--foreground);

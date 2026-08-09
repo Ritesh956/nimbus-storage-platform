@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { ThemeToggle } from "./ThemeToggle";
 import {
   FolderIcon,
   SearchIcon,
@@ -90,13 +91,16 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
           })}
         </nav>
 
-        <button
-          onClick={handleLogout}
-          className="glow-ring mt-4 flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
-        >
-          <LogoutIcon size={16} className="text-muted-2" />
-          Log out
-        </button>
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            onClick={handleLogout}
+            className="glow-ring flex flex-1 items-center gap-3 rounded-lg border border-border/60 px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+          >
+            <LogoutIcon size={16} className="text-muted-2" />
+            Log out
+          </button>
+          <ThemeToggle />
+        </div>
       </aside>
 
       {/* Mobile top bar (<lg) */}
@@ -105,8 +109,9 @@ export function AppShell({ orgId, orgName, children }: { orgId: string; orgName?
           <LogoMark size={26} />
           <span className="text-[15px] font-semibold tracking-tight">Nimbus</span>
         </Link>
-        <div className="flex items-center gap-2">
-          {orgName && <span className="max-w-36 truncate text-xs text-muted">{orgName}</span>}
+        <div className="flex items-center gap-1">
+          {orgName && <span className="max-w-28 truncate text-xs text-muted">{orgName}</span>}
+          <ThemeToggle />
           <button
             onClick={handleLogout}
             title="Log out"

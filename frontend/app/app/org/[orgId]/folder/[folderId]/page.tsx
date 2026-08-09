@@ -75,18 +75,64 @@ export default function FolderPage() {
     }
   }
 
+  // Trash/rename/move update this page's SWR cache instantly
+  // (optimisticData) instead of waiting for the round trip first (audit
+  // §12's last named gap) — the mutation promise itself is passed with
+  // populateCache: false (its resolved value doesn't matter, only whether
+  // it rejects) and revalidate: true fetches the confirmed state
+  // afterward. A rejected mutation rolls the cache back automatically
+  // (rollbackOnError). `curr!` below is safe: every caller only fires
+  // these once `data` is already loaded and rendered.
   async function trashFolder(id: string, name: string) {
-    await api.folders.trash(id);
-    await mutate();
-    showToast({
-      message: `"${name}" moved to trash`,
-      action: {
-        label: "Undo",
-        onClick: async () => {
-          await api.folders.restore(id);
-          await mutate();
+    try {
+      await mutate(api.folders.trash(id).then(() => undefined), {
+        optimisticData: (curr) => ({ ...curr!, folders: curr!.folders.filter((f) => f.id !== id) }),
+        rollbackOnError: true,
+        revalidate: true,
+        populateCache: false,
+      });
+      showToast({
+        message: `"${name}" moved to trash`,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            await api.folders.restore(id);
+            await mutate();
+          },
         },
-      },
+      });
+    } catch (err) {
+      showToast({ message: err instanceof ApiError ? err.message : `failed to move "${name}" to trash` });
+    }
+  }
+
+  async function optimisticTrashFile(fileId: string): Promise<void> {
+    await mutate(api.files.trash(fileId).then(() => undefined), {
+      optimisticData: (curr) => ({ ...curr!, files: curr!.files.filter((f) => f.id !== fileId) }),
+      rollbackOnError: true,
+      revalidate: true,
+      populateCache: false,
+    });
+  }
+
+  async function optimisticRenameFile(fileId: string, name: string): Promise<void> {
+    await mutate(api.files.rename(fileId, name).then(() => undefined), {
+      optimisticData: (curr) => ({
+        ...curr!,
+        files: curr!.files.map((f) => (f.id === fileId ? { ...f, name } : f)),
+      }),
+      rollbackOnError: true,
+      revalidate: true,
+      populateCache: false,
+    });
+  }
+
+  async function optimisticMoveFile(fileId: string, targetFolderId: string): Promise<void> {
+    await mutate(api.files.move(fileId, targetFolderId).then(() => undefined), {
+      optimisticData: (curr) => ({ ...curr!, files: curr!.files.filter((f) => f.id !== fileId) }),
+      rollbackOnError: true,
+      revalidate: true,
+      populateCache: false,
     });
   }
 
@@ -234,6 +280,9 @@ export default function FolderPage() {
                   orgId={orgId}
                   folderId={folderId}
                   onChanged={() => mutate()}
+                  onOptimisticTrash={optimisticTrashFile}
+                  onOptimisticRename={optimisticRenameFile}
+                  onOptimisticMove={optimisticMoveFile}
                   selected={selected.has(f.id)}
                   onToggleSelect={() => toggleSelected(f.id)}
                 />
@@ -248,7 +297,17 @@ export default function FolderPage() {
           orgId={orgId}
           item={{ kind: "folder", ...movingFolder }}
           onClose={() => setMovingFolder(null)}
-          onMoved={() => mutate()}
+          onMove={async (targetFolderId) => {
+            await mutate(api.folders.move(movingFolder.id, targetFolderId).then(() => undefined), {
+              optimisticData: (curr) => ({
+                ...curr!,
+                folders: curr!.folders.filter((f) => f.id !== movingFolder.id),
+              }),
+              rollbackOnError: true,
+              revalidate: true,
+              populateCache: false,
+            });
+          }}
         />
       )}
 

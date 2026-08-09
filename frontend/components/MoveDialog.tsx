@@ -11,7 +11,11 @@ interface Props {
   orgId: string;
   item: { kind: "file"; id: string; name: string; currentFolderId: string } | { kind: "folder"; id: string; name: string };
   onClose: () => void;
-  onMoved: () => void;
+  // Performs the actual move (audit §12: optimistic UI) — the caller owns
+  // the SWR cache the item lives in, so it's the one place that can update
+  // the list instantly instead of waiting for this dialog's own round trip.
+  // Rejects with the same error moveHere used to catch directly.
+  onMove: (targetFolderId: string | null) => Promise<void>;
 }
 
 // MoveDialog is a drill-down folder picker over the same listing endpoints
@@ -20,7 +24,7 @@ interface Props {
 // moved is hidden from the listing — you can't reach yourself or your own
 // descendants without going through yourself, so that alone keeps the
 // picker cycle-free (the backend still enforces it server-side).
-export function MoveDialog({ orgId, item, onClose, onMoved }: Props) {
+export function MoveDialog({ orgId, item, onClose, onMove }: Props) {
   // Path from root down to where the picker currently is; empty = root.
   const [path, setPath] = useState<{ id: string; name: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -43,12 +47,7 @@ export function MoveDialog({ orgId, item, onClose, onMoved }: Props) {
     setBusy(true);
     setError(null);
     try {
-      if (item.kind === "file") {
-        await api.files.move(item.id, current!.id);
-      } else {
-        await api.folders.move(item.id, current?.id ?? null);
-      }
-      onMoved();
+      await onMove(current?.id ?? null);
       onClose();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "move failed");

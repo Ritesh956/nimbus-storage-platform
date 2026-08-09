@@ -119,6 +119,13 @@ interface Props {
   orgId: string;
   folderId: string;
   onChanged: () => void;
+  // Trash/rename/move are optimistic (audit §12): the parent owns the SWR
+  // cache these three mutate through instantly, before the network call
+  // resolves, rolling back automatically if it fails. onChanged stays for
+  // paths that don't need that treatment (version restore, share revoke).
+  onOptimisticTrash: (fileId: string) => Promise<void>;
+  onOptimisticRename: (fileId: string, name: string) => Promise<void>;
+  onOptimisticMove: (fileId: string, targetFolderId: string) => Promise<void>;
   // Multi-select for bundle sharing (post-Tier-3 session): when
   // onToggleSelect is provided the row renders a leading checkbox; the
   // parent owns the selection set.
@@ -126,7 +133,17 @@ interface Props {
   onToggleSelect?: () => void;
 }
 
-export function FileRow({ file, orgId, folderId, onChanged, selected = false, onToggleSelect }: Props) {
+export function FileRow({
+  file,
+  orgId,
+  folderId,
+  onChanged,
+  onOptimisticTrash,
+  onOptimisticRename,
+  onOptimisticMove,
+  selected = false,
+  onToggleSelect,
+}: Props) {
   const fileId = file.id;
   const name = file.name;
   const { showToast } = useToast();
@@ -208,8 +225,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
     setBusy(true);
     setError(null);
     try {
-      await api.files.trash(fileId);
-      onChanged();
+      await onOptimisticTrash(fileId);
       showToast({
         message: `"${name}" moved to trash`,
         action: {
@@ -221,7 +237,12 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
         },
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "failed to trash file");
+      // The row is already gone from the parent's list by now (optimistic
+      // removal happens before this await settles) — an inline alert here
+      // could be lost the moment SWR's rollback remounts a fresh instance,
+      // so a failed trash surfaces via toast instead of this row's own
+      // error state.
+      showToast({ message: err instanceof ApiError ? err.message : `failed to move "${name}" to trash` });
       setBusy(false);
     }
   }
@@ -230,9 +251,8 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
     setBusy(true);
     setError(null);
     try {
-      await api.files.rename(fileId, newName);
+      await onOptimisticRename(fileId, newName);
       setRenaming(false);
-      onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "failed to rename file");
     } finally {
@@ -412,7 +432,7 @@ export function FileRow({ file, orgId, folderId, onChanged, selected = false, on
           orgId={orgId}
           item={{ kind: "file", id: fileId, name, currentFolderId: folderId }}
           onClose={() => setMoving(false)}
-          onMoved={onChanged}
+          onMove={(targetFolderId) => onOptimisticMove(fileId, targetFolderId!)}
         />
       )}
     </li>

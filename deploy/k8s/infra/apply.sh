@@ -21,6 +21,12 @@ NS=nimbus
 
 kubectl apply -f "$DIR_WIN/namespace.yaml"
 
+# metrics-server: cluster-wide (kube-system), applied before the namespaced
+# infra below since nothing here depends on it — but the HPA (part of the
+# Helm chart, installed after this script) does, to report real numbers
+# instead of <unknown>.
+kubectl apply -f "$DIR_WIN/metrics-server.yaml"
+
 kubectl -n "$NS" create configmap prometheus-config \
   --from-file=prometheus.yml="$OBS/prometheus.yml" \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -56,4 +62,5 @@ kubectl -n "$NS" rollout status deployment/prometheus --timeout=60s
 # own ordering honest about the real dependency.
 kubectl -n "$NS" rollout status deployment/tempo --timeout=60s
 kubectl -n "$NS" rollout status deployment/grafana --timeout=60s
+kubectl -n kube-system rollout status deployment/metrics-server --timeout=90s
 echo "Infra ready. Now: helm install nimbus deploy/k8s/helm/nimbus -n nimbus"

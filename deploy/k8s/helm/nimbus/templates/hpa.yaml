@@ -1,9 +1,7 @@
-# HPA stub, per docs/03-hld.md §3 ("Helm chart we own ... HPA stub"). Needs
-# metrics-server in-cluster to actually scale, which the kind demo cluster
-# doesn't have installed — this exists as the scaffold a real deployment
-# would build on, matching this project's pattern of flagging designed-but-
-# not-fully-wired pieces explicitly (docs/00-project-state.md "Known
-# issues") rather than pretending it does something it doesn't yet.
+# Was a stub (docs/03-hld.md §3) until deploy/k8s/infra/metrics-server.yaml
+# was added — apply.sh now installs metrics-server before this chart, so
+# `kubectl get hpa` reports a real CPU percentage instead of <unknown> and
+# this can actually scale nimbus-api 1→3 replicas under real load.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

@@ -32,6 +32,11 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+            limits:
+              # Higher than nimbus-api: pdfium-WASM PDF thumbnail rendering
+              # is the single heaviest thing either process does.
+              cpu: 500m
+              memory: 768Mi
           livenessProbe:
             httpGet:
               path: /healthz

@@ -25,6 +25,15 @@ spec:
               value: nimbus
           ports:
             - containerPort: 3000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              # 512Mi, not 256: a live kubectl top check during this
+              # session showed real usage already at ~306Mi.
+              memory: 512Mi
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources

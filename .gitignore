@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local scratch
 *.log
+
+# scripts/backup.sh output — real data dumps, never committed
+/backups/
