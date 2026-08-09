@@ -250,11 +250,16 @@ jobs:
 
       # kind-config.yaml's extraPortMappings put the NodePorts on these
       # host ports — the same URLs the documented local recipe uses.
+      # --retry-all-errors (not just --retry-connrefused): a fresh pod's
+      # NodePort route can reset the first connection while kube-proxy is
+      # still propagating iptables rules, which curl treats as error 56
+      # (Recv failure), not connection-refused — --retry-connrefused alone
+      # doesn't cover that and let one flaky reset fail the whole job.
       - name: smoke check health endpoints
         run: |
-          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/healthz
-          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-connrefused http://localhost:8080/readyz
-          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-connrefused http://localhost:3000/api/health
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors http://localhost:8080/healthz
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors http://localhost:8080/readyz
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors http://localhost:3000/api/health
 
       - name: dump cluster state on failure
         if: failure()
