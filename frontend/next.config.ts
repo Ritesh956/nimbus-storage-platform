@@ -10,8 +10,11 @@ const nextConfig: NextConfig = {
   },
   // Minimal, self-contained server bundle for the Dockerfile.web build
   // (Day 13) — copies only the files `next start` actually needs into
-  // .next/standalone instead of shipping node_modules wholesale.
-  output: "standalone",
+  // .next/standalone instead of shipping node_modules wholesale. Skipped on
+  // Vercel (VERCEL is set on every Vercel build): Vercel packages its own
+  // deployment output and standalone mode's trace-file layout breaks its
+  // post-build step (ENOENT on next-server.js.nft.json).
+  output: process.env.VERCEL ? undefined : "standalone",
 };
 
 export default nextConfig;
