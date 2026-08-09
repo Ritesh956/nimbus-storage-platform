@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nimbus/internal/auth"
+	"nimbus/internal/file"
 	"nimbus/internal/folder"
 	"nimbus/internal/org"
 )
@@ -321,5 +322,67 @@ func TestPurgeExpiredTrash_OnlyPurgesPastRetentionAndGuardsLiveContent(t *testin
 	}
 	if _, err := repo.GetAny(ctx, recent.ID); err != nil {
 		t.Fatalf("recently trashed folder should survive (within retention), got err %v", err)
+	}
+}
+
+// TestPurgeExpiredTrash_CascadeDecrementsOrgUsageBytes covers the write path
+// audit §06's usage_bytes counter (backend/internal/file/repository.go's
+// OrgUsageBytes) most needed direct proof for: deleting a folders row
+// CASCADEs straight through files/file_versions without ever calling
+// file.Repository.Purge or PurgeExpiredTrash, so this module has its own,
+// independent obligation to credit the freed bytes back — nothing else
+// would catch a regression here.
+func TestPurgeExpiredTrash_CascadeDecrementsOrgUsageBytes(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	authRepo := auth.NewRepository(pool)
+	user, err := authRepo.CreateUser(ctx, fmt.Sprintf("folder-usage-%s@nimbus.test", suffix), "irrelevant-hash")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	orgRepo := org.NewRepository(pool)
+	o, err := orgRepo.CreateWithOwner(ctx, "Folder Usage Org "+suffix, user.ID)
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+
+	folderRepo := folder.NewRepository(pool)
+	folderSvc := folder.NewService(folderRepo)
+	fileRepo := file.NewRepository(pool)
+
+	f, err := folderSvc.Create(ctx, o.ID, nil, "Folder With A File")
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	if _, _, err := fileRepo.CreateWithVersion(ctx, o.ID, f.ID, "inside.bin", user.ID, 750, "checksum", "text/plain", nil); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if used, err := fileRepo.OrgUsageBytes(ctx, o.ID); err != nil || used != 750 {
+		t.Fatalf("OrgUsageBytes before delete = (%d, %v), want (750, nil)", used, err)
+	}
+
+	if err := folderSvc.Delete(ctx, f.ID); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE folders SET deleted_at = now() - interval '31 days' WHERE id = $1`, f.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	purged, err := folderRepo.PurgeExpiredTrash(ctx, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("PurgeExpiredTrash: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("purged = %d, want exactly 1", purged)
+	}
+
+	used, err := fileRepo.OrgUsageBytes(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("OrgUsageBytes after cascade purge: %v", err)
+	}
+	if used != 0 {
+		t.Fatalf("OrgUsageBytes after cascade purge = %d, want 0 — the file inside the purged folder is gone, and its bytes must come off the counter even though file.Repository.Purge was never called for it", used)
 	}
 }

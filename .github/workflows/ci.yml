@@ -23,8 +23,18 @@ jobs:
         run: go build ./...
       - name: unit test
         run: go test ./... -short -coverprofile=/tmp/unit.cov -coverpkg=./...
+      # Audit §14's other named "Improve": both languages already printed a
+      # real number, but nothing failed a push for a coverage drop. This is
+      # a regression floor, not an aspirational target — set just under the
+      # real measured baseline (4.7% as of this revision; -coverpkg=./...
+      # counts every statement in the repo, including untested cmd/*
+      # binaries and thin platform/* helpers, which is why the total reads
+      # far lower than any individual well-tested package's own number).
       - name: unit coverage summary
-        run: go tool cover -func=/tmp/unit.cov | tail -1
+        run: |
+          go tool cover -func=/tmp/unit.cov | tail -1
+          pct=$(go tool cover -func=/tmp/unit.cov | tail -1 | grep -oE '[0-9]+\.[0-9]+')
+          awk -v pct="$pct" 'BEGIN { if (pct+0 < 4.0) { print "::error::unit coverage " pct "% dropped below the 4.0% floor"; exit 1 } }'
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck
@@ -166,23 +176,66 @@ jobs:
           NIMBUS_TEST_MINIO_SECRET_KEY: nimbus-secret
           NIMBUS_TEST_NATS_URL: nats://localhost:4222
         run: go test -tags=integration -coverprofile=/tmp/integration.cov -coverpkg=./... ./...
+      # Same regression-floor reasoning as build-test's unit coverage step —
+      # set just under the real measured baseline (22.7% as of this
+      # revision, same -coverpkg=./... caveat about the repo-wide
+      # denominator).
       - name: integration coverage summary
         working-directory: backend
-        run: go tool cover -func=/tmp/integration.cov | tail -1
+        run: |
+          go tool cover -func=/tmp/integration.cov | tail -1
+          pct=$(go tool cover -func=/tmp/integration.cov | tail -1 | grep -oE '[0-9]+\.[0-9]+')
+          awk -v pct="$pct" 'BEGIN { if (pct+0 < 20.0) { print "::error::integration coverage " pct "% dropped below the 20.0% floor"; exit 1 } }'
 
+  # Audit §15's standout remaining gap: four from-scratch image builds on
+  # every push, and helm-smoke-deploy (below) rebuilds the identical four
+  # Dockerfiles from the identical source again on top of that — doubling
+  # the from-scratch cost per push. Both jobs now build via buildx with the
+  # GitHub Actions cache backend (type=gha), keyed by image name (`scope`)
+  # rather than by job, so a layer either job populates is reusable by the
+  # other — one Go/npm dependency layer, built once, serves both.
   docker-build:
     runs-on: ubuntu-latest
     needs: [build-test, frontend]
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
       - name: build api image
-        run: docker build -f deploy/Dockerfile.api -t nimbus-api:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.api
+          tags: nimbus-api:ci
+          load: true
+          cache-from: type=gha,scope=nimbus-api
+          cache-to: type=gha,mode=max,scope=nimbus-api
       - name: build worker image
-        run: docker build -f deploy/Dockerfile.worker -t nimbus-worker:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.worker
+          tags: nimbus-worker:ci
+          load: true
+          cache-from: type=gha,scope=nimbus-worker
+          cache-to: type=gha,mode=max,scope=nimbus-worker
       - name: build web image
-        run: docker build -f deploy/Dockerfile.web -t nimbus-web:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.web
+          tags: nimbus-web:ci
+          load: true
+          cache-from: type=gha,scope=nimbus-web
+          cache-to: type=gha,mode=max,scope=nimbus-web
       - name: build migrate image
-        run: docker build -f deploy/Dockerfile.migrate -t nimbus-migrate:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.migrate
+          tags: nimbus-migrate:ci
+          load: true
+          cache-from: type=gha,scope=nimbus-migrate
+          cache-to: type=gha,mode=max,scope=nimbus-migrate
 
   # Closes the audit's "Helm chart isn't in CI" gap (docs/00's item 26, the
   # audit's §15/§19 row 13) — the chart was previously trusted entirely on
@@ -219,15 +272,47 @@ jobs:
           version: v0.32.0
           kubectl_version: v1.36.1
 
+      - uses: docker/setup-buildx-action@v3
+
       # Same four images docker-build validates, tagged to match
       # values.yaml's defaults (pullPolicy: Never expects them local, not
-      # pulled) rather than the :ci tag docker-build uses.
+      # pulled) rather than the :ci tag docker-build uses. Same GHA cache
+      # scopes as docker-build's equivalent steps (see that job's comment) —
+      # whichever of the two parallel jobs populates a layer first, the
+      # other reuses it instead of rebuilding from scratch.
       - name: build images
-        run: |
-          docker build -f deploy/Dockerfile.api -t nimbus-api:latest .
-          docker build -f deploy/Dockerfile.worker -t nimbus-worker:latest .
-          docker build -f deploy/Dockerfile.web -t nimbus-web:latest .
-          docker build -f deploy/Dockerfile.migrate -t nimbus-migrate:latest .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.api
+          tags: nimbus-api:latest
+          load: true
+          cache-from: type=gha,scope=nimbus-api
+          cache-to: type=gha,mode=max,scope=nimbus-api
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.worker
+          tags: nimbus-worker:latest
+          load: true
+          cache-from: type=gha,scope=nimbus-worker
+          cache-to: type=gha,mode=max,scope=nimbus-worker
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.web
+          tags: nimbus-web:latest
+          load: true
+          cache-from: type=gha,scope=nimbus-web
+          cache-to: type=gha,mode=max,scope=nimbus-web
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.migrate
+          tags: nimbus-migrate:latest
+          load: true
+          cache-from: type=gha,scope=nimbus-migrate
+          cache-to: type=gha,mode=max,scope=nimbus-migrate
 
       - name: load images into kind
         run: kind load docker-image nimbus-api:latest nimbus-worker:latest nimbus-web:latest nimbus-migrate:latest --name nimbus

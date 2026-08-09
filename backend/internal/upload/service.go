@@ -19,7 +19,7 @@ type FileCreator interface {
 	CreateWithVersion(ctx context.Context, orgID, folderID, name, createdBy string, sizeBytes int64, checksumSHA256, mimeType string, chunkHashes []string) (fileID, versionID string, err error)
 	// AddVersion adds a new version to an existing file (re-upload) — the
 	// TargetFileID path, docs/09-roadmap.md Day 6.
-	AddVersion(ctx context.Context, fileID, createdBy string, sizeBytes int64, checksumSHA256, mimeType string, chunkHashes []string) (versionID string, err error)
+	AddVersion(ctx context.Context, orgID, fileID, createdBy string, sizeBytes int64, checksumSHA256, mimeType string, chunkHashes []string) (versionID string, err error)
 	// GetForUpload resolves an existing file's org/folder/name for
 	// authorizing and labeling a re-upload session.
 	GetForUpload(ctx context.Context, fileID string) (orgID, folderID, name string, err error)
@@ -326,7 +326,7 @@ func (s *Service) CompleteUpload(ctx context.Context, u Upload, idempotencyKey s
 
 	if u.TargetFileID != nil {
 		fileID = *u.TargetFileID
-		versionID, err = s.files.AddVersion(ctx, fileID, u.CreatedBy, sizeBytes, checksumSHA256, u.MimeType, chunkOrder)
+		versionID, err = s.files.AddVersion(ctx, u.OrgID, fileID, u.CreatedBy, sizeBytes, checksumSHA256, u.MimeType, chunkOrder)
 	} else {
 		fileID, versionID, err = s.files.CreateWithVersion(ctx, u.OrgID, u.FolderID, u.Name, u.CreatedBy, sizeBytes, checksumSHA256, u.MimeType, chunkOrder)
 	}

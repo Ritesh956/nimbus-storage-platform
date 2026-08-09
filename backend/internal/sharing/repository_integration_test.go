@@ -8,9 +8,11 @@
 package sharing_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -374,5 +376,112 @@ func TestCreateBundleShare_ValidMultiFileBundleResolvesAllMembers(t *testing.T) 
 	}
 	if len(resolved.Files) != 2 {
 		t.Fatalf("bundle resolved %d files, want 2", len(resolved.Files))
+	}
+}
+
+// The tests above for CreateBundleShare/Resolve call fx.svc directly —
+// proving the service-layer logic is right, but not the HTTP contract
+// around it (audit §14's remaining named gap: 0% handler-layer coverage).
+// TestDelete_NonMemberCannotRevoke/MemberCanRevokeAndLinkIsGoneAfter above
+// already go through sharing.Handler; the three tests below extend that to
+// Handler.CreateBundle and Handler.Resolve — JSON request parsing, the
+// error-code switch in CreateBundle, and the actual response body shape a
+// real client receives, none of which fx.svc.CreateBundleShare exercises on
+// its own.
+
+func newBundleRequest(t *testing.T, orgID, userID string, body string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/shares", bytes.NewBufferString(body))
+	req.SetPathValue("orgId", orgID)
+	return req.WithContext(auth.WithUserID(req.Context(), userID))
+}
+
+func TestHandlerCreateBundle_EmptyFileIDsReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	h := sharing.NewHandler(fx.svc, memberOnlyChecker{isMember: true})
+
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	req := newBundleRequest(t, fx.orgID, fx.ownerID, `{"expires_at":"`+future+`","file_ids":[]}`)
+	w := httptest.NewRecorder()
+	h.CreateBundle(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for an empty file_ids bundle (ErrEmptyBundle)", w.Code)
+	}
+}
+
+func TestHandlerCreateBundle_CrossOrgFileReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	otherFx := newFixture(t, pool)
+	fileA, _ := fx.createFile(t, "handler-bundle-a.bin", "checksum-handler-a")
+	fileB, _ := otherFx.createFile(t, "handler-bundle-b.bin", "checksum-handler-b")
+	h := sharing.NewHandler(fx.svc, memberOnlyChecker{isMember: true})
+
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	body, err := json.Marshal(map[string]any{"expires_at": future, "file_ids": []string{fileA, fileB}})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := newBundleRequest(t, fx.orgID, fx.ownerID, string(body))
+	w := httptest.NewRecorder()
+	h.CreateBundle(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a bundle spanning two orgs (ErrFileNotShareable)", w.Code)
+	}
+}
+
+func TestHandlerCreateBundleThenResolve_RoundTripsRealJSONResponses(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	fileA, _ := fx.createFile(t, "handler-bundle-x.bin", "checksum-handler-x")
+	fileB, _ := fx.createFile(t, "handler-bundle-y.bin", "checksum-handler-y")
+	h := sharing.NewHandler(fx.svc, memberOnlyChecker{isMember: true})
+
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	createBody, err := json.Marshal(map[string]any{"expires_at": future, "file_ids": []string{fileA, fileB}})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	createReq := newBundleRequest(t, fx.orgID, fx.ownerID, string(createBody))
+	createW := httptest.NewRecorder()
+	h.CreateBundle(createW, createReq)
+
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201, body: %s", createW.Code, createW.Body.String())
+	}
+	var created struct {
+		Token string `json:"token"`
+		URL   string `json:"url"`
+	}
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+	if created.Token == "" || created.URL == "" {
+		t.Fatalf("create response missing token/url: %+v", created)
+	}
+
+	resolveReq := httptest.NewRequest(http.MethodGet, "/v1/shares/"+created.Token, nil)
+	resolveReq.SetPathValue("token", created.Token)
+	resolveW := httptest.NewRecorder()
+	h.Resolve(resolveW, resolveReq)
+
+	if resolveW.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, want 200, body: %s", resolveW.Code, resolveW.Body.String())
+	}
+	var resolved struct {
+		Kind  string           `json:"kind"`
+		Files []map[string]any `json:"files"`
+	}
+	if err := json.Unmarshal(resolveW.Body.Bytes(), &resolved); err != nil {
+		t.Fatalf("unmarshal resolve response: %v", err)
+	}
+	if resolved.Kind != string(sharing.KindBundle) {
+		t.Fatalf("resolved kind = %q, want %q", resolved.Kind, sharing.KindBundle)
+	}
+	if len(resolved.Files) != 2 {
+		t.Fatalf("resolved %d files in the real JSON response, want 2", len(resolved.Files))
 	}
 }

@@ -295,22 +295,75 @@ func (r *Repository) PurgeExpiredTrash(ctx context.Context, olderThan time.Durat
 
 	var purged int64
 	for _, id := range candidates {
-		// The guard and delete are one statement, so nothing restored
-		// between them can be lost. A candidate inside another candidate's
-		// subtree just vanishes first via the ancestor's cascade — its own
-		// delete then matches zero rows, which is fine.
-		tag, err := r.pool.Exec(ctx, subtreeCTE+`
-			DELETE FROM folders WHERE id = $1
-			  AND NOT EXISTS (
-				SELECT 1 FROM folders f JOIN subtree s ON f.id = s.id WHERE f.deleted_at IS NULL
-			  )
-			  AND NOT EXISTS (
-				SELECT 1 FROM files fi JOIN subtree s ON fi.folder_id = s.id WHERE fi.deleted_at IS NULL
-			  )`, id)
+		n, err := r.purgeOneFolderCascade(ctx, id)
 		if err != nil {
 			return purged, err
 		}
-		purged += tag.RowsAffected()
+		purged += n
 	}
 	return purged, nil
+}
+
+// purgeOneFolderCascade guards-and-deletes a single candidate the same way
+// the pre-existing loop body did, but wrapped in a transaction: deleting a
+// folders row cascades to files/file_versions in its subtree *without* ever
+// calling file.Repository, which is the only reason this module has to
+// touch organizations.usage_bytes directly rather than leaving that to
+// file.Repository.Purge — this is a second, independent write path to the
+// same counter (audit §06), and skipping it here would leave the counter
+// silently drifting upward every time a trashed folder full of files aged
+// out, instead of file.Repository's Purge/PurgeExpiredTrash catching it.
+func (r *Repository) purgeOneFolderCascade(ctx context.Context, id string) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	const guard = `
+		  AND NOT EXISTS (
+			SELECT 1 FROM folders f JOIN subtree s ON f.id = s.id WHERE f.deleted_at IS NULL
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM files fi JOIN subtree s ON fi.folder_id = s.id WHERE fi.deleted_at IS NULL
+		  )`
+
+	// Same guard as the DELETE below, evaluated first (same transaction, same
+	// fixed subtree) so the freed-bytes figure and the actual delete can
+	// never disagree about whether this candidate is really eligible.
+	var orgID string
+	var freedBytes int64
+	err = tx.QueryRow(ctx, subtreeCTE+`
+		SELECT fo.org_id, COALESCE((
+			SELECT SUM(v.size_bytes) FROM files fi JOIN file_versions v ON v.file_id = fi.id
+			WHERE fi.folder_id IN (SELECT id FROM subtree)
+		), 0)
+		FROM folders fo
+		WHERE fo.id = $1`+guard, id).Scan(&orgID, &freedBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil // guard failed (subtree still has live content) — no-op, matches the old behavior
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	// The guard and delete are one statement, so nothing restored between
+	// them can be lost. A candidate inside another candidate's subtree just
+	// vanishes first via the ancestor's cascade — its own delete then
+	// matches zero rows, which is fine.
+	tag, err := tx.Exec(ctx, subtreeCTE+`
+		DELETE FROM folders WHERE id = $1`+guard, id)
+	if err != nil {
+		return 0, err
+	}
+	n := tag.RowsAffected()
+	if n > 0 && freedBytes > 0 {
+		if _, err = tx.Exec(ctx, `UPDATE organizations SET usage_bytes = usage_bytes - $1 WHERE id = $2`, freedBytes, orgID); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

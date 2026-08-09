@@ -170,7 +170,7 @@ func TestAddVersionThenRestoreVersion_MirrorsSmokeVersionsFlow(t *testing.T) {
 		t.Fatalf("CreateWithVersion: %v", err)
 	}
 
-	v2, err := fx.fileRepo.AddVersion(ctx, fileID, fx.ownerID, 200, fakeChecksum("v2"), "text/plain", []string{fakeChecksum("chunk-2a"), fakeChecksum("chunk-2b")})
+	v2, err := fx.fileRepo.AddVersion(ctx, fx.orgID, fileID, fx.ownerID, 200, fakeChecksum("v2"), "text/plain", []string{fakeChecksum("chunk-2a"), fakeChecksum("chunk-2b")})
 	if err != nil {
 		t.Fatalf("AddVersion: %v", err)
 	}
@@ -246,6 +246,9 @@ func TestDeleteRestorePurge_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWithVersion: %v", err)
 	}
+	if used, err := fx.fileRepo.OrgUsageBytes(ctx, fx.orgID); err != nil || used != 10 {
+		t.Fatalf("OrgUsageBytes after create = (%d, %v), want (10, nil)", used, err)
+	}
 
 	if err := fx.svc.Delete(ctx, fileID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -283,6 +286,13 @@ func TestDeleteRestorePurge_Lifecycle(t *testing.T) {
 	}
 	if _, err := fx.fileRepo.GetAny(ctx, fileID); !errors.Is(err, file.ErrNotFound) {
 		t.Fatalf("purged file should be gone even via GetAny, got err %v", err)
+	}
+	// Audit §06: usage_bytes is now a maintained counter (was a live SUM
+	// join) — Purge is one of the write paths that has to credit it back,
+	// or a trashed-then-purged file's bytes would sit stuck against quota
+	// forever despite the file being provably gone.
+	if used, err := fx.fileRepo.OrgUsageBytes(ctx, fx.orgID); err != nil || used != 0 {
+		t.Fatalf("OrgUsageBytes after Purge = (%d, %v), want (0, nil) — the only file in this org is now gone", used, err)
 	}
 }
 
@@ -357,5 +367,11 @@ func TestPurgeExpiredTrash_OnlyPurgesPastRetention(t *testing.T) {
 	}
 	if _, err := fx.fileRepo.GetAny(ctx, recentID); err != nil {
 		t.Fatalf("recently trashed file should survive, got err %v", err)
+	}
+	// Only the expired file's 10 bytes come off usage_bytes — the recent
+	// one is still trashed-but-not-purged, so its bytes still count
+	// (matching OrgUsageBytes's own trashed-still-counts semantics).
+	if used, err := fx.fileRepo.OrgUsageBytes(ctx, fx.orgID); err != nil || used != 10 {
+		t.Fatalf("OrgUsageBytes after PurgeExpiredTrash = (%d, %v), want (10, nil) — only recent.bin's bytes remain", used, err)
 	}
 }

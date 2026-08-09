@@ -299,6 +299,20 @@ func TestResurrection_RecommittingADoomedChunkFlipsItBackToLive(t *testing.T) {
 	ctx := context.Background()
 	content := []byte("resurrectable content")
 	hash := fx.commitChunk(t, content)
+	// Resurrection (below) intentionally flips this chunk back to 'live'
+	// with a fresh last_seen_at without ever giving it a new
+	// file_version_chunks reference — that's the whole point, proving
+	// UpsertGlobalChunk alone does it. Left alone past this test, it's a
+	// real live-but-unreferenced row sitting in the shared test database:
+	// once its last_seen_at ages past fx.sweeper's 1-second grace, any
+	// later test's mark() call (a global, unscoped UPDATE) can sweep it in
+	// and inflate that test's own doomed-chunk count. Clean it up
+	// explicitly rather than leaving cross-test timing to chance.
+	t.Cleanup(func() {
+		if _, err := fx.pool.Exec(context.Background(), `DELETE FROM chunks WHERE hash = $1`, hash); err != nil {
+			t.Logf("cleanup: delete resurrected chunk %s: %v", hash, err)
+		}
+	})
 
 	fileID, _, err := fx.fileRepo.CreateWithVersion(ctx, fx.orgID, fx.folderID, "gc-r1.bin", fx.ownerID, int64(len(content)), "checksum-r1", "application/octet-stream", []string{hash})
 	if err != nil {

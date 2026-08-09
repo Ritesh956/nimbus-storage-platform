@@ -145,22 +145,98 @@ func (r *Repository) Restore(ctx context.Context, id string) error {
 
 // Purge is a hard delete, only ever called on an already-trashed row
 // (enforced in Service.Purge) — trash-then-purge is the only path to
-// permanent deletion, never a direct one (docs/06-api-design.md §4).
+// permanent deletion, never a direct one (docs/06-api-design.md §4). Runs in
+// a transaction because the org's freed bytes (every version this file ever
+// had, matching OrgUsageBytes's own logical-bytes accounting) have to be
+// summed *before* the DELETE cascades file_versions away.
 func (r *Repository) Purge(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM files WHERE id = $1 AND deleted_at IS NOT NULL`, id)
-	return err
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var orgID string
+	var freedBytes int64
+	err = tx.QueryRow(ctx,
+		`SELECT f.org_id, COALESCE(SUM(v.size_bytes), 0)
+		 FROM files f LEFT JOIN file_versions v ON v.file_id = f.id
+		 WHERE f.id = $1 AND f.deleted_at IS NOT NULL
+		 GROUP BY f.org_id`, id).Scan(&orgID, &freedBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // nothing trashed under this id — matches the old no-op DELETE
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(ctx, `DELETE FROM files WHERE id = $1 AND deleted_at IS NOT NULL`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE organizations SET usage_bytes = usage_bytes - $1 WHERE id = $2`, freedBytes, orgID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // PurgeExpiredTrash hard-deletes every file trashed longer ago than
 // olderThan — FR-11's retention window, called from nimbus-worker's GC tick
 // (gc.TrashPurger). The row deletions cascade to file_versions and
 // file_version_chunks, which is what makes the freed chunks visible to the
-// chunk sweeper's mark phase.
+// chunk sweeper's mark phase. Per-org freed bytes are summed before the
+// DELETE (same reason as Purge above) and credited back in one UPDATE per
+// affected org — now() is fixed for the lifetime of a transaction, so both
+// statements see the identical cutoff despite running as separate queries.
 func (r *Repository) PurgeExpiredTrash(ctx context.Context, olderThan time.Duration) (int64, error) {
-	tag, err := r.pool.Exec(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx,
+		`SELECT f.org_id, COALESCE(SUM(v.size_bytes), 0)
+		 FROM files f LEFT JOIN file_versions v ON v.file_id = f.id
+		 WHERE f.deleted_at IS NOT NULL AND f.deleted_at < now() - ($1 * interval '1 second')
+		 GROUP BY f.org_id`, olderThan.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	type orgFreed struct {
+		orgID string
+		bytes int64
+	}
+	var freed []orgFreed
+	for rows.Next() {
+		var of orgFreed
+		if err := rows.Scan(&of.orgID, &of.bytes); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		freed = append(freed, of)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	rows.Close()
+
+	tag, err := tx.Exec(ctx,
 		`DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 * interval '1 second')`,
 		olderThan.Seconds())
-	return tag.RowsAffected(), err
+	if err != nil {
+		return 0, err
+	}
+
+	for _, of := range freed {
+		if _, err = tx.Exec(ctx, `UPDATE organizations SET usage_bytes = usage_bytes - $1 WHERE id = $2`, of.bytes, of.orgID); err != nil {
+			return 0, err
+		}
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // CreateWithVersion is the only way a file ever comes into existence — via
@@ -206,6 +282,10 @@ func (r *Repository) CreateWithVersion(ctx context.Context, orgID, folderID, nam
 		return "", "", err
 	}
 
+	if _, err = tx.Exec(ctx, `UPDATE organizations SET usage_bytes = usage_bytes + $1 WHERE id = $2`, sizeBytes, orgID); err != nil {
+		return "", "", err
+	}
+
 	if err = tx.Commit(ctx); err != nil {
 		return "", "", err
 	}
@@ -225,9 +305,12 @@ func (r *Repository) GetForUpload(ctx context.Context, fileID string) (orgID, fo
 	return f.OrgID, f.FolderID, f.Name, nil
 }
 
-// AddVersion creates a new version under an existing file (re-upload),
-// as opposed to CreateWithVersion which creates the file too.
-func (r *Repository) AddVersion(ctx context.Context, fileID, createdBy string, sizeBytes int64, checksumSHA256, mimeType string, chunkHashes []string) (versionID string, err error) {
+// AddVersion creates a new version under an existing file (re-upload), as
+// opposed to CreateWithVersion which creates the file too. orgID is the
+// caller's already-resolved org (upload.Service.CompleteUpload has it on
+// hand as u.OrgID) — needed only to credit the right org's usage_bytes
+// counter, not for any authorization check here.
+func (r *Repository) AddVersion(ctx context.Context, orgID, fileID, createdBy string, sizeBytes int64, checksumSHA256, mimeType string, chunkHashes []string) (versionID string, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -255,6 +338,10 @@ func (r *Repository) AddVersion(ctx context.Context, fileID, createdBy string, s
 	if _, err = tx.Exec(ctx,
 		`UPDATE files SET latest_version_id = $1, updated_at = now() WHERE id = $2`, versionID, fileID,
 	); err != nil {
+		return "", err
+	}
+
+	if _, err = tx.Exec(ctx, `UPDATE organizations SET usage_bytes = usage_bytes + $1 WHERE id = $2`, sizeBytes, orgID); err != nil {
 		return "", err
 	}
 
@@ -331,17 +418,19 @@ func (r *Repository) RestoreVersion(ctx context.Context, fileID, versionID strin
 		versionID, fileID))
 }
 
-// OrgUsageBytes sums every stored version's size across the org — the
-// logical bytes a user sees stored, not dedup-adjusted physical bytes.
-// Trashed files still count (their bytes are only freed by purge, and
-// excluding them would make trashing a quota-evasion trick); satisfies
-// upload.UsageReader for quota enforcement (post-v1 backlog #8).
+// OrgUsageBytes reads organizations.usage_bytes — a counter maintained
+// incrementally by every write that changes an org's stored bytes
+// (CreateWithVersion, AddVersion, Purge, PurgeExpiredTrash, plus
+// folder.Repository.PurgeExpiredTrash's cascade purge), rather than the live
+// SUM join across file_versions/files this used to run per call (audit §06:
+// a full-table scan on every upload init and complete). The logical-bytes
+// semantics are unchanged: trashed files still count (their bytes are only
+// freed by purge, and excluding them would make trashing a quota-evasion
+// trick); satisfies upload.UsageReader for quota enforcement.
 func (r *Repository) OrgUsageBytes(ctx context.Context, orgID string) (int64, error) {
 	var total int64
 	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(v.size_bytes), 0)
-		 FROM file_versions v JOIN files f ON f.id = v.file_id
-		 WHERE f.org_id = $1`, orgID).Scan(&total)
+		`SELECT usage_bytes FROM organizations WHERE id = $1`, orgID).Scan(&total)
 	return total, err
 }
 
