@@ -12,6 +12,7 @@ package org_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -513,5 +514,208 @@ func TestHandlerSetQuota_UnknownOrgReturns404(t *testing.T) {
 	h.SetQuota(w, newSetQuotaRequest("00000000-0000-0000-0000-000000000000", `{"quota_bytes":500}`))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for a nonexistent org id", w.Code)
+	}
+}
+
+// Audit §14's remaining named gap for this module: org's member-management
+// routes (ListMembers/AddMember/RemoveMember) sat at 0% handler coverage
+// even after SetQuota's tests above landed. The tests below exercise
+// org.Handler directly (real HTTP request/response via httptest), same
+// pattern as newSetQuotaRequest — the role-elevation/removal bounds
+// themselves are already covered at the service layer
+// (TestAddMemberByEmail_*/RemoveMember tests earlier in this file); what's
+// new here is JSON parsing and the handler's error-code mapping.
+
+func newHandlerTestOrg(t *testing.T, pool *pgxpool.Pool, label string) (*org.Repository, *org.Handler, auth.User, org.Organization) {
+	t.Helper()
+	ctx := context.Background()
+	owner := newTestUser(t, pool, label+"-owner")
+	repo := org.NewRepository(pool)
+	o, err := repo.CreateWithOwner(ctx, "Handler Test Org "+label, owner.ID)
+	if err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+	authRepo := auth.NewRepository(pool)
+	svc := org.NewService(repo, userLookupAdapter{repo: authRepo}, noopFolderCreator{}, org.UsageSources{}, 1000)
+	return repo, org.NewHandler(svc), owner, o
+}
+
+func newAddMemberRequest(orgID, body string, caller org.Member) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/members", bytes.NewBufferString(body))
+	r.SetPathValue("orgId", orgID)
+	return r.WithContext(org.WithMembership(r.Context(), caller))
+}
+
+func TestHandlerListMembers_ReturnsRealMembersFromDB(t *testing.T) {
+	pool := newTestPool(t)
+	repo, h, owner, o := newHandlerTestOrg(t, pool, "list")
+
+	admin := newTestUser(t, pool, "list-admin")
+	if err := repo.AddMember(context.Background(), o.ID, admin.ID, org.RoleAdmin); err != nil {
+		t.Fatalf("seed admin member: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+o.ID+"/members", nil)
+	req.SetPathValue("orgId", o.ID)
+	w := httptest.NewRecorder()
+	h.ListMembers(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var members []map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &members); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members = %d, want 2 (owner + seeded admin), body: %s", len(members), w.Body.String())
+	}
+	var sawOwner, sawAdmin bool
+	for _, m := range members {
+		switch m["user_id"] {
+		case owner.ID:
+			sawOwner = m["role"] == string(org.RoleOwner)
+		case admin.ID:
+			sawAdmin = m["role"] == string(org.RoleAdmin)
+		}
+	}
+	if !sawOwner || !sawAdmin {
+		t.Fatalf("expected both owner and admin roles to round-trip, got %+v", members)
+	}
+}
+
+func TestHandlerAddMember_MissingEmailReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	_, h, owner, o := newHandlerTestOrg(t, pool, "addmember-missing")
+
+	req := newAddMemberRequest(o.ID, `{"role":"member"}`, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.AddMember(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a missing email", w.Code)
+	}
+}
+
+func TestHandlerAddMember_UnknownEmailReturns404(t *testing.T) {
+	pool := newTestPool(t)
+	_, h, owner, o := newHandlerTestOrg(t, pool, "addmember-unknown")
+
+	req := newAddMemberRequest(o.ID, `{"email":"nobody-`+fmt.Sprintf("%d", time.Now().UnixNano())+`@nimbus.test","role":"member"}`, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.AddMember(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for an email with no matching user", w.Code)
+	}
+}
+
+func TestHandlerAddMember_AdminGrantingAdminReturns403(t *testing.T) {
+	pool := newTestPool(t)
+	_, h, _, o := newHandlerTestOrg(t, pool, "addmember-elevate")
+	target := newTestUser(t, pool, "addmember-elevate-target")
+
+	// Caller is an admin (not owner) trying to grant the elevated admin
+	// role — Service.AddMemberByEmail's ErrElevatedRoleNeedsOwner bound.
+	caller := org.Member{OrgID: o.ID, UserID: "irrelevant-admin-id", Role: org.RoleAdmin}
+	req := newAddMemberRequest(o.ID, `{"email":"`+target.Email+`","role":"admin"}`, caller)
+	w := httptest.NewRecorder()
+	h.AddMember(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a non-owner attempting to grant admin", w.Code)
+	}
+}
+
+func TestHandlerAddMember_AlreadyMemberReturns409(t *testing.T) {
+	pool := newTestPool(t)
+	repo, h, owner, o := newHandlerTestOrg(t, pool, "addmember-dup")
+	target := newTestUser(t, pool, "addmember-dup-target")
+	if err := repo.AddMember(context.Background(), o.ID, target.ID, org.RoleMember); err != nil {
+		t.Fatalf("seed existing member: %v", err)
+	}
+
+	req := newAddMemberRequest(o.ID, `{"email":"`+target.Email+`","role":"member"}`, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.AddMember(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for an already-member email", w.Code)
+	}
+}
+
+func TestHandlerAddMember_ValidGrantReturns201AndPersists(t *testing.T) {
+	pool := newTestPool(t)
+	repo, h, owner, o := newHandlerTestOrg(t, pool, "addmember-valid")
+	target := newTestUser(t, pool, "addmember-valid-target")
+
+	req := newAddMemberRequest(o.ID, `{"email":"`+target.Email+`","role":"admin"}`, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.AddMember(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+	m, err := repo.GetMembership(context.Background(), o.ID, target.ID)
+	if err != nil || m.Role != org.RoleAdmin {
+		t.Fatalf("membership after handler AddMember = %+v, err = %v, want role=admin", m, err)
+	}
+}
+
+func newRemoveMemberRequest(orgID, userID string, caller org.Member) *http.Request {
+	r := httptest.NewRequest(http.MethodDelete, "/v1/orgs/"+orgID+"/members/"+userID, nil)
+	r.SetPathValue("orgId", orgID)
+	r.SetPathValue("userId", userID)
+	return r.WithContext(org.WithMembership(r.Context(), caller))
+}
+
+func TestHandlerRemoveMember_OwnerCannotBeRemovedReturns409(t *testing.T) {
+	pool := newTestPool(t)
+	_, h, owner, o := newHandlerTestOrg(t, pool, "removemember-owner")
+
+	req := newRemoveMemberRequest(o.ID, owner.ID, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.RemoveMember(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for attempting to remove the org owner", w.Code)
+	}
+}
+
+func TestHandlerRemoveMember_AdminRemovingAdminReturns403(t *testing.T) {
+	pool := newTestPool(t)
+	repo, h, _, o := newHandlerTestOrg(t, pool, "removemember-peer")
+	targetAdmin := newTestUser(t, pool, "removemember-peer-target")
+	if err := repo.AddMember(context.Background(), o.ID, targetAdmin.ID, org.RoleAdmin); err != nil {
+		t.Fatalf("seed target admin: %v", err)
+	}
+
+	caller := org.Member{OrgID: o.ID, UserID: "irrelevant-caller-id", Role: org.RoleAdmin}
+	req := newRemoveMemberRequest(o.ID, targetAdmin.ID, caller)
+	w := httptest.NewRecorder()
+	h.RemoveMember(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an admin trying to remove a peer admin", w.Code)
+	}
+}
+
+func TestHandlerRemoveMember_ValidRemoveReturns204AndDeletesRow(t *testing.T) {
+	pool := newTestPool(t)
+	repo, h, owner, o := newHandlerTestOrg(t, pool, "removemember-valid")
+	target := newTestUser(t, pool, "removemember-valid-target")
+	if err := repo.AddMember(context.Background(), o.ID, target.ID, org.RoleMember); err != nil {
+		t.Fatalf("seed member: %v", err)
+	}
+
+	req := newRemoveMemberRequest(o.ID, target.ID, org.Member{OrgID: o.ID, UserID: owner.ID, Role: org.RoleOwner})
+	w := httptest.NewRecorder()
+	h.RemoveMember(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	if _, err := repo.GetMembership(context.Background(), o.ID, target.ID); !errors.Is(err, org.ErrNotMember) {
+		t.Fatalf("got err %v, want ErrNotMember after removal", err)
 	}
 }

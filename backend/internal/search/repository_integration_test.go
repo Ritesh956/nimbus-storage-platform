@@ -9,7 +9,10 @@ package search_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -220,5 +223,67 @@ func TestSearch_DateRangeFilter(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Fatalf("results = %d, want 1 for a date_from in the past", len(results))
+	}
+}
+
+// Audit §14 named search as one of five backend modules still at 0%
+// handler-layer coverage — search.Handler.Search has no HTTP-level test at
+// all, only the service-layer Filters tests above. The tests below exercise
+// it directly (real HTTP request/response via httptest): query-string
+// parsing into Filters, the RFC3339/int64 validation switch, and the actual
+// response body shape a real client receives.
+
+func TestHandlerSearch_InvalidDateFromReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	h := search.NewHandler(fx.svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+fx.orgID+"/search?date_from=not-a-date", nil)
+	req.SetPathValue("orgId", fx.orgID)
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a non-RFC3339 date_from", w.Code)
+	}
+}
+
+func TestHandlerSearch_InvalidSizeMinReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	h := search.NewHandler(fx.svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+fx.orgID+"/search?size_min=not-a-number", nil)
+	req.SetPathValue("orgId", fx.orgID)
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a non-integer size_min", w.Code)
+	}
+}
+
+func TestHandlerSearch_ValidQueryReturnsRealJSONResponseBody(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	fx.upload(t, "handler-search-report.pdf", "application/pdf", 2048)
+	h := search.NewHandler(fx.svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+fx.orgID+"/search?q=handler-search&limit=10", nil)
+	req.SetPathValue("orgId", fx.orgID)
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0]["name"] != "handler-search-report.pdf" {
+		t.Fatalf("results = %+v, want exactly the one uploaded file", resp.Results)
 	}
 }

@@ -46,7 +46,7 @@ export default function AdminPage() {
           <p className="text-sm text-muted">Platform admin access required.</p>
           <p className="max-w-sm text-xs leading-relaxed text-muted-2">
             This page shows deployment-wide internals (storage nodes, hash ring, dead-letter queue), not
-            organization data — access is granted per account via NIMBUS_PLATFORM_ADMIN_EMAILS.
+            organization data — access is limited to the single seeded platform-admin account.
           </p>
         </div>
       </div>

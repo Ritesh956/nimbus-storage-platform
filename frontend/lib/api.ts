@@ -196,6 +196,12 @@ export const api = {
         body: json({ file_ids: fileIds, expires_at: expiresAt }),
       }),
     usage: (orgId: string) => request<OrgUsage>(`/v1/orgs/${orgId}/usage`),
+    // Platform-admin only (stricter than usage's org-owner gate) — a
+    // cross-tenant limit override is a platform operation, not something an
+    // org's own owner can grant itself. quotaBytes null clears the override,
+    // falling back to the deployment's configured default.
+    setQuota: (orgId: string, quotaBytes: number | null) =>
+      request<void>(`/v1/orgs/${orgId}/quota`, { method: "PATCH", body: json({ quota_bytes: quotaBytes }) }),
     rootFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/folders`),
     trashedFolders: (orgId: string) => request<FolderNode[]>(`/v1/orgs/${orgId}/trash/folders`),
     trashedFiles: (orgId: string) => request<FileNode[]>(`/v1/orgs/${orgId}/trash/files`),

@@ -11,11 +11,15 @@
 package file_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -373,5 +377,177 @@ func TestPurgeExpiredTrash_OnlyPurgesPastRetention(t *testing.T) {
 	// (matching OrgUsageBytes's own trashed-still-counts semantics).
 	if used, err := fx.fileRepo.OrgUsageBytes(ctx, fx.orgID); err != nil || used != 10 {
 		t.Fatalf("OrgUsageBytes after PurgeExpiredTrash = (%d, %v), want (10, nil) — only recent.bin's bytes remain", used, err)
+	}
+}
+
+// Audit §14 named file as one of five backend modules still at 0%
+// handler-layer coverage even after this file's service/repository tests
+// above landed (DownloadPlan/ThumbnailTargets stay out of scope — they need
+// a real storage.Router/MinIO, same carve-out this file's header comment
+// already documents). The tests below exercise file.Handler directly (real
+// HTTP request/response via httptest, WithFile standing in for
+// RequireAccess's context injection).
+
+type stubMembershipChecker struct{ isMember bool }
+
+func (s stubMembershipChecker) IsMember(ctx context.Context, orgID, userID string) (bool, error) {
+	return s.isMember, nil
+}
+
+func TestHandlerUpdate_RenameSucceedsAndCrossOrgFolderReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	ctx := context.Background()
+	otherFx := newFixture(t, pool)
+
+	fileID, _, err := fx.fileRepo.CreateWithVersion(ctx, fx.orgID, fx.folderID, "handler-update.bin", fx.ownerID, 10, fakeChecksum("handler-update"), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("CreateWithVersion: %v", err)
+	}
+	f, err := fx.fileRepo.Get(ctx, fileID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	h := file.NewHandler(fx.svc, stubMembershipChecker{isMember: true})
+
+	renameReq := httptest.NewRequest(http.MethodPatch, "/v1/files/"+fileID, bytes.NewBufferString(`{"name":"renamed.bin"}`))
+	renameReq = renameReq.WithContext(file.WithFile(renameReq.Context(), f))
+	renameW := httptest.NewRecorder()
+	h.Update(renameW, renameReq)
+	if renameW.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200, body: %s", renameW.Code, renameW.Body.String())
+	}
+	var renamed map[string]any
+	if err := json.Unmarshal(renameW.Body.Bytes(), &renamed); err != nil {
+		t.Fatalf("unmarshal rename response: %v", err)
+	}
+	if renamed["name"] != "renamed.bin" {
+		t.Fatalf("renamed name = %v, want renamed.bin", renamed["name"])
+	}
+
+	moveReq := httptest.NewRequest(http.MethodPatch, "/v1/files/"+fileID, bytes.NewBufferString(`{"folder_id":"`+otherFx.folderID+`"}`))
+	moveReq = moveReq.WithContext(file.WithFile(moveReq.Context(), f))
+	moveW := httptest.NewRecorder()
+	h.Update(moveW, moveReq)
+	if moveW.Code != http.StatusBadRequest {
+		t.Fatalf("cross-org move status = %d, want 400 (ErrInvalidFolder), body: %s", moveW.Code, moveW.Body.String())
+	}
+}
+
+func TestHandlerDelete_TrashesFile(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	ctx := context.Background()
+
+	fileID, _, err := fx.fileRepo.CreateWithVersion(ctx, fx.orgID, fx.folderID, "handler-delete.bin", fx.ownerID, 10, fakeChecksum("handler-delete"), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("CreateWithVersion: %v", err)
+	}
+	f, err := fx.fileRepo.Get(ctx, fileID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	h := file.NewHandler(fx.svc, stubMembershipChecker{isMember: true})
+	req := httptest.NewRequest(http.MethodDelete, "/v1/files/"+fileID, nil)
+	req = req.WithContext(file.WithFile(req.Context(), f))
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	got, err := fx.fileRepo.GetAny(ctx, fileID)
+	if err != nil {
+		t.Fatalf("GetAny after delete: %v", err)
+	}
+	if got.DeletedAt == nil {
+		t.Fatal("expected DeletedAt to be set after Handler.Delete")
+	}
+}
+
+func TestHandlerRestoreAndPurge_NonMemberForbiddenThenMemberSucceeds(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	ctx := context.Background()
+
+	fileID, _, err := fx.fileRepo.CreateWithVersion(ctx, fx.orgID, fx.folderID, "handler-restore.bin", fx.ownerID, 10, fakeChecksum("handler-restore"), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("CreateWithVersion: %v", err)
+	}
+	if err := fx.fileRepo.SoftDelete(ctx, fileID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	deniedHandler := file.NewHandler(fx.svc, stubMembershipChecker{isMember: false})
+	deniedReq := httptest.NewRequest(http.MethodPost, "/v1/files/"+fileID+"/restore", nil)
+	deniedReq.SetPathValue("fileId", fileID)
+	deniedW := httptest.NewRecorder()
+	deniedHandler.Restore(deniedW, deniedReq)
+	if deniedW.Code != http.StatusForbidden {
+		t.Fatalf("non-member restore status = %d, want 403", deniedW.Code)
+	}
+
+	allowedHandler := file.NewHandler(fx.svc, stubMembershipChecker{isMember: true})
+	restoreReq := httptest.NewRequest(http.MethodPost, "/v1/files/"+fileID+"/restore", nil)
+	restoreReq.SetPathValue("fileId", fileID)
+	restoreW := httptest.NewRecorder()
+	allowedHandler.Restore(restoreW, restoreReq)
+	if restoreW.Code != http.StatusOK {
+		t.Fatalf("member restore status = %d, want 200, body: %s", restoreW.Code, restoreW.Body.String())
+	}
+
+	// Purge requires a trashed file first (ErrNotTrashed at the service
+	// layer) — trash it again, then purge through the handler.
+	if err := fx.fileRepo.SoftDelete(ctx, fileID); err != nil {
+		t.Fatalf("re-SoftDelete: %v", err)
+	}
+	purgeReq := httptest.NewRequest(http.MethodDelete, "/v1/files/"+fileID+"/purge", nil)
+	purgeReq.SetPathValue("fileId", fileID)
+	purgeW := httptest.NewRecorder()
+	allowedHandler.Purge(purgeW, purgeReq)
+	if purgeW.Code != http.StatusNoContent {
+		t.Fatalf("purge status = %d, want 204, body: %s", purgeW.Code, purgeW.Body.String())
+	}
+	if _, err := fx.fileRepo.GetAny(ctx, fileID); !errors.Is(err, file.ErrNotFound) {
+		t.Fatalf("purged file should be gone, got err %v", err)
+	}
+}
+
+func TestHandlerListVersions_ReturnsAllVersionsForFile(t *testing.T) {
+	pool := newTestPool(t)
+	fx := newFixture(t, pool)
+	ctx := context.Background()
+	seedChunk(t, pool, fakeChecksum("handler-versions-chunk-1"))
+	seedChunk(t, pool, fakeChecksum("handler-versions-chunk-2"))
+
+	fileID, _, err := fx.fileRepo.CreateWithVersion(ctx, fx.orgID, fx.folderID, "handler-versions.bin", fx.ownerID, 10, fakeChecksum("v1"), "text/plain", []string{fakeChecksum("handler-versions-chunk-1")})
+	if err != nil {
+		t.Fatalf("CreateWithVersion: %v", err)
+	}
+	if _, err := fx.fileRepo.AddVersion(ctx, fx.orgID, fileID, fx.ownerID, 20, fakeChecksum("v2"), "text/plain", []string{fakeChecksum("handler-versions-chunk-2")}); err != nil {
+		t.Fatalf("AddVersion: %v", err)
+	}
+	f, err := fx.fileRepo.Get(ctx, fileID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	h := file.NewHandler(fx.svc, stubMembershipChecker{isMember: true})
+	req := httptest.NewRequest(http.MethodGet, "/v1/files/"+fileID+"/versions", nil)
+	req = req.WithContext(file.WithFile(req.Context(), f))
+	w := httptest.NewRecorder()
+	h.ListVersions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var versions []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &versions); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("versions = %d, want 2, body: %s", len(versions), w.Body.String())
 	}
 }

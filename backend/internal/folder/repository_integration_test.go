@@ -9,9 +9,13 @@
 package folder_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -384,5 +388,251 @@ func TestPurgeExpiredTrash_CascadeDecrementsOrgUsageBytes(t *testing.T) {
 	}
 	if used != 0 {
 		t.Fatalf("OrgUsageBytes after cascade purge = %d, want 0 — the file inside the purged folder is gone, and its bytes must come off the counter even though file.Repository.Purge was never called for it", used)
+	}
+
+	_ = f // silence unused if reordered later
+}
+
+// Audit §14 named folder as one of five backend modules still at 0%
+// handler-layer coverage even after this file's service/repository tests
+// landed. The tests below exercise folder.Handler directly (real HTTP
+// request/response via httptest, WithFolder standing in for
+// RequireAccess's context injection) — JSON parsing, the
+// omitted-vs-explicit-null distinction Update's own comment calls out, and
+// the error-code switch in writeFolderError, none of which the tests above
+// touch.
+
+type stubFileLister struct{ files []folder.FileSummary }
+
+func (s stubFileLister) ListInFolder(ctx context.Context, folderID string) ([]folder.FileSummary, error) {
+	return s.files, nil
+}
+
+type stubMembershipChecker struct{ isMember bool }
+
+func (s stubMembershipChecker) IsMember(ctx context.Context, orgID, userID string) (bool, error) {
+	return s.isMember, nil
+}
+
+func TestHandlerCreate_MissingNameReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	h := folder.NewHandler(folder.NewService(folder.NewRepository(pool)), stubFileLister{}, stubMembershipChecker{isMember: true})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/folders", bytes.NewBufferString(`{}`))
+	req.SetPathValue("orgId", orgID)
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a missing name", w.Code)
+	}
+}
+
+func TestHandlerCreate_ValidReturns201WithRealID(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	h := folder.NewHandler(folder.NewService(folder.NewRepository(pool)), stubFileLister{}, stubMembershipChecker{isMember: true})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/folders", bytes.NewBufferString(`{"name":"New Folder"}`))
+	req.SetPathValue("orgId", orgID)
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp["id"] == "" || resp["id"] == nil {
+		t.Fatalf("response missing id: %+v", resp)
+	}
+}
+
+func TestHandlerListChildren_ReturnsFoldersAndFilesFromContext(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	folderRepo := folder.NewRepository(pool)
+	folderSvc := folder.NewService(folderRepo)
+	ctx := context.Background()
+
+	parent, err := folderSvc.Create(ctx, orgID, nil, "Parent")
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	if _, err := folderSvc.Create(ctx, orgID, &parent.ID, "Child"); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+
+	files := stubFileLister{files: []folder.FileSummary{{ID: "file-1", Name: "doc.pdf"}}}
+	h := folder.NewHandler(folderSvc, files, stubMembershipChecker{isMember: true})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/folders/"+parent.ID+"/children", nil)
+	req = req.WithContext(folder.WithFolder(req.Context(), parent))
+	w := httptest.NewRecorder()
+	h.ListChildren(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Folders []map[string]any `json:"folders"`
+		Files   []map[string]any `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Folders) != 1 || resp.Folders[0]["name"] != "Child" {
+		t.Fatalf("folders = %+v, want exactly the one child folder", resp.Folders)
+	}
+	if len(resp.Files) != 1 || resp.Files[0]["name"] != "doc.pdf" {
+		t.Fatalf("files = %+v, want the one stubbed file", resp.Files)
+	}
+}
+
+func TestHandlerPath_ReturnsRootToLeafAncestorChain(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	folderSvc := folder.NewService(folder.NewRepository(pool))
+	ctx := context.Background()
+
+	root, err := folderSvc.Create(ctx, orgID, nil, "Root")
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	leaf, err := folderSvc.Create(ctx, orgID, &root.ID, "Leaf")
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+
+	h := folder.NewHandler(folderSvc, stubFileLister{}, stubMembershipChecker{isMember: true})
+	req := httptest.NewRequest(http.MethodGet, "/v1/folders/"+leaf.ID+"/path", nil)
+	req = req.WithContext(folder.WithFolder(req.Context(), leaf))
+	w := httptest.NewRecorder()
+	h.Path(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var chain []map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &chain); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(chain) != 2 || chain[0]["name"] != "Root" || chain[1]["name"] != "Leaf" {
+		t.Fatalf("path chain = %+v, want [Root, Leaf] in that order", chain)
+	}
+}
+
+func TestHandlerUpdate_RenameSucceedsAndMoveIntoOwnDescendantReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	folderSvc := folder.NewService(folder.NewRepository(pool))
+	ctx := context.Background()
+
+	parent, err := folderSvc.Create(ctx, orgID, nil, "Update Parent")
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := folderSvc.Create(ctx, orgID, &parent.ID, "Update Child")
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+
+	h := folder.NewHandler(folderSvc, stubFileLister{}, stubMembershipChecker{isMember: true})
+
+	renameReq := httptest.NewRequest(http.MethodPatch, "/v1/folders/"+parent.ID, bytes.NewBufferString(`{"name":"Renamed Parent"}`))
+	renameReq = renameReq.WithContext(folder.WithFolder(renameReq.Context(), parent))
+	renameW := httptest.NewRecorder()
+	h.Update(renameW, renameReq)
+	if renameW.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200, body: %s", renameW.Code, renameW.Body.String())
+	}
+	var renamed map[string]any
+	if err := json.Unmarshal(renameW.Body.Bytes(), &renamed); err != nil {
+		t.Fatalf("unmarshal rename response: %v", err)
+	}
+	if renamed["name"] != "Renamed Parent" {
+		t.Fatalf("renamed name = %v, want %q", renamed["name"], "Renamed Parent")
+	}
+
+	moveReq := httptest.NewRequest(http.MethodPatch, "/v1/folders/"+parent.ID, bytes.NewBufferString(`{"parent_id":"`+child.ID+`"}`))
+	moveReq = moveReq.WithContext(folder.WithFolder(moveReq.Context(), parent))
+	moveW := httptest.NewRecorder()
+	h.Update(moveW, moveReq)
+	if moveW.Code != http.StatusBadRequest {
+		t.Fatalf("move-into-own-child status = %d, want 400 (ErrCyclicMove)", moveW.Code)
+	}
+}
+
+func TestHandlerDelete_TrashesFolder(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	folderRepo := folder.NewRepository(pool)
+	folderSvc := folder.NewService(folderRepo)
+	ctx := context.Background()
+
+	f, err := folderSvc.Create(ctx, orgID, nil, "To Delete")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	h := folder.NewHandler(folderSvc, stubFileLister{}, stubMembershipChecker{isMember: true})
+	req := httptest.NewRequest(http.MethodDelete, "/v1/folders/"+f.ID, nil)
+	req = req.WithContext(folder.WithFolder(req.Context(), f))
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	got, err := folderRepo.GetAny(ctx, f.ID)
+	if err != nil {
+		t.Fatalf("GetAny after delete: %v", err)
+	}
+	if got.DeletedAt == nil {
+		t.Fatal("expected DeletedAt to be set after Handler.Delete")
+	}
+}
+
+func TestHandlerRestore_NonMemberReturns403AndMemberSucceeds(t *testing.T) {
+	pool := newTestPool(t)
+	orgID := newTestOrg(t, pool)
+	folderRepo := folder.NewRepository(pool)
+	folderSvc := folder.NewService(folderRepo)
+	ctx := context.Background()
+
+	f, err := folderSvc.Create(ctx, orgID, nil, "To Restore")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := folderSvc.Delete(ctx, f.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	deniedHandler := folder.NewHandler(folderSvc, stubFileLister{}, stubMembershipChecker{isMember: false})
+	deniedReq := httptest.NewRequest(http.MethodPost, "/v1/folders/"+f.ID+"/restore", nil)
+	deniedReq.SetPathValue("folderId", f.ID)
+	deniedW := httptest.NewRecorder()
+	deniedHandler.Restore(deniedW, deniedReq)
+	if deniedW.Code != http.StatusForbidden {
+		t.Fatalf("non-member restore status = %d, want 403", deniedW.Code)
+	}
+
+	allowedHandler := folder.NewHandler(folderSvc, stubFileLister{}, stubMembershipChecker{isMember: true})
+	allowedReq := httptest.NewRequest(http.MethodPost, "/v1/folders/"+f.ID+"/restore", nil)
+	allowedReq.SetPathValue("folderId", f.ID)
+	allowedW := httptest.NewRecorder()
+	allowedHandler.Restore(allowedW, allowedReq)
+	if allowedW.Code != http.StatusOK {
+		t.Fatalf("member restore status = %d, want 200, body: %s", allowedW.Code, allowedW.Body.String())
+	}
+	got, err := folderRepo.GetAny(ctx, f.ID)
+	if err != nil {
+		t.Fatalf("GetAny after restore: %v", err)
+	}
+	if got.DeletedAt != nil {
+		t.Fatal("expected DeletedAt to be cleared after Handler.Restore")
 	}
 }

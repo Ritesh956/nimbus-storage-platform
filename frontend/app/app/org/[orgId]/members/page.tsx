@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatCard } from "@/components/ui/Card";
 import { TablePanel, Th, Td, Tr } from "@/components/ui/Table";
-import { UsersIcon, TrashIcon, PlusIcon, FileIcon, LinkIcon, PulseIcon } from "@/components/ui/Icons";
+import { UsersIcon, TrashIcon, PlusIcon, FileIcon, LinkIcon, PulseIcon, ShieldIcon } from "@/components/ui/Icons";
 import type { OrgRole } from "@/lib/types";
 
 // Badge tones for the three-tier role ladder.
@@ -36,7 +36,7 @@ export default function MembersPage() {
   // Owner-gated oversight — members get a 403 here, which just means no
   // panel (the fetcher swallows it rather than surfacing an error for a
   // view they were never meant to see).
-  const { data: usage } = useSWR(
+  const { data: usage, mutate: mutateUsage } = useSWR(
     ["org-usage", orgId],
     () => api.orgs.usage(orgId).catch((err) => (err instanceof ApiError && err.status === 403 ? null : Promise.reject(err))),
     { shouldRetryOnError: false },
@@ -51,6 +51,53 @@ export default function MembersPage() {
   const [role, setRole] = useState<OrgRole>("member");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Platform-admin-only quota override (audit §06 item 41: PATCH
+  // /v1/orgs/{orgId}/quota — built and tested server-side, never wired to
+  // any admin page). Gated on is_platform_admin alone, not on `usage`
+  // being loaded: Usage is owner-gated per-org, so a platform admin who
+  // isn't also a member here would otherwise never see this control.
+  const [quotaGB, setQuotaGB] = useState("");
+  const [quotaBusy, setQuotaBusy] = useState(false);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
+  const [quotaMsg, setQuotaMsg] = useState<string | null>(null);
+
+  async function setQuotaOverride(e: FormEvent) {
+    e.preventDefault();
+    const gb = Number(quotaGB);
+    if (!Number.isFinite(gb) || gb <= 0) {
+      setQuotaError("enter a positive number of GB");
+      return;
+    }
+    setQuotaBusy(true);
+    setQuotaError(null);
+    setQuotaMsg(null);
+    try {
+      await api.orgs.setQuota(orgId, Math.round(gb * 1024 ** 3));
+      setQuotaMsg("Quota override set.");
+      setQuotaGB("");
+      await mutateUsage();
+    } catch (err) {
+      setQuotaError(err instanceof ApiError ? err.message : "failed to set quota override");
+    } finally {
+      setQuotaBusy(false);
+    }
+  }
+
+  async function clearQuotaOverride() {
+    setQuotaBusy(true);
+    setQuotaError(null);
+    setQuotaMsg(null);
+    try {
+      await api.orgs.setQuota(orgId, null);
+      setQuotaMsg("Quota override cleared — back to the deployment default.");
+      await mutateUsage();
+    } catch (err) {
+      setQuotaError(err instanceof ApiError ? err.message : "failed to clear quota override");
+    } finally {
+      setQuotaBusy(false);
+    }
+  }
 
   // The form is only rendered for admin-and-up (canManage), and the role
   // options match what the caller may actually grant — but the server
@@ -121,6 +168,53 @@ export default function MembersPage() {
             chipTone="neutral"
           />
           </div>
+        </div>
+      )}
+
+      {me?.is_platform_admin && (
+        <div className="panel flex flex-col gap-3 p-4">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-2">
+            <ShieldIcon size={13} />
+            Platform admin — per-tenant quota override
+          </div>
+          <p className="text-xs leading-relaxed text-muted-2">
+            {usage
+              ? `Effective quota: ${formatBytes(usage.storage.quota_bytes)}. Setting a value below overrides the deployment default for this org only; clearing it falls back to the default.`
+              : "Set a per-org quota override, or clear one to fall back to the deployment default."}
+          </p>
+          <form onSubmit={setQuotaOverride} className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              type="number"
+              min="0"
+              step="any"
+              aria-label="Quota override in gigabytes"
+              placeholder="Quota override (GB)"
+              value={quotaGB}
+              onChange={(e) => setQuotaGB(e.target.value)}
+            />
+            <Button type="submit" disabled={quotaBusy || !quotaGB} className="shrink-0">
+              Set override
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={quotaBusy}
+              className="shrink-0"
+              onClick={clearQuotaOverride}
+            >
+              Clear override
+            </Button>
+          </form>
+          {quotaError && (
+            <p role="alert" className="text-xs text-danger">
+              {quotaError}
+            </p>
+          )}
+          {quotaMsg && !quotaError && (
+            <p role="status" className="text-xs text-success">
+              {quotaMsg}
+            </p>
+          )}
         </div>
       )}
 
