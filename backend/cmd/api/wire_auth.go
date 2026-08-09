@@ -92,6 +92,10 @@ func wireAuth(
 	mux.Handle("DELETE /v1/orgs/{orgId}/members/{userId}", requireAuth(requireOrgAdmin(http.HandlerFunc(orgHandler.RemoveMember))))
 	// Org governance (admin tier and up), distinct from /v1/admin/* cluster ops.
 	mux.Handle("GET /v1/orgs/{orgId}/usage", requireAuth(requireOrgAdmin(http.HandlerFunc(orgHandler.Usage))))
+	// Per-tenant quota override (audit §06) is platform-admin tier, not
+	// org-admin — a cross-tenant limit change isn't something an org's own
+	// admin/owner should be able to grant itself.
+	mux.Handle("PATCH /v1/orgs/{orgId}/quota", requireAuth(requirePlatformAdmin(http.HandlerFunc(orgHandler.SetQuota))))
 
 	return authSvc, requireAuth, requirePlatformAdmin, orgRepo, requireMember
 }

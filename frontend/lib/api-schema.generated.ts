@@ -1991,6 +1991,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{orgId}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set or clear a per-tenant quota override (platform-admin only) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    orgId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetQuotaRequest"];
+                };
+            };
+            responses: {
+                /** @description quota updated */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description error */
+                default: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/orgs/{orgId}/search": {
         parameters: {
             query?: never;
@@ -2928,6 +2977,9 @@ export interface components {
             name: string;
             owner_id: string;
             size_bytes?: number | null;
+        };
+        SetQuotaRequest: {
+            quota_bytes?: number | null;
         };
         ShareChildrenResponse: {
             files: components["schemas"]["ShareFileInfo"][];

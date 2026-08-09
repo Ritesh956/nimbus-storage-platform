@@ -115,6 +115,41 @@ func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, u)
 }
 
+type setQuotaRequest struct {
+	// nil (omitted or explicit JSON null) clears the override, falling back
+	// to the configured default — matches Repository.SetQuotaOverride.
+	QuotaBytes *int64 `json:"quota_bytes"`
+}
+
+// SetQuota serves PATCH /v1/orgs/{orgId}/quota — platform-admin only
+// (RequirePlatformAdmin in main.go, a stricter tier than Usage's org-owner
+// gate above): a cross-tenant limit override is a platform operation, not
+// something an org's own owner should be able to grant itself (audit §06's
+// per-tenant quota gap).
+func (h *Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	var req setQuotaRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpserver.WriteError(w, r, httpserver.ErrInvalid, "malformed JSON body")
+			return
+		}
+	}
+	if req.QuotaBytes != nil && *req.QuotaBytes <= 0 {
+		httpserver.WriteError(w, r, httpserver.ErrInvalid, "quota_bytes must be positive, or omitted/null to clear the override")
+		return
+	}
+	if err := h.svc.SetQuota(r.Context(), orgID, req.QuotaBytes); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpserver.WriteError(w, r, httpserver.ErrNotFound, "organization not found")
+			return
+		}
+		httpserver.WriteError(w, r, httpserver.ErrInternal, "failed to set organization quota")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	userID := r.PathValue("userId")

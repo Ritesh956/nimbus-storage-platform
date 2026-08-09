@@ -118,6 +118,10 @@ var routeTable = map[string]routeDoc{
 	"GET /v1/orgs/{orgId}/usage": {
 		Summary: "Aggregate org usage/oversight (owner-gated)", Tags: []string{"orgs"}, Response: responseDoc{Status: "200", Description: "usage", Body: apidoc.OrgUsage{}},
 	},
+	"PATCH /v1/orgs/{orgId}/quota": {
+		Summary: "Set or clear a per-tenant quota override (platform-admin only)", Tags: []string{"orgs"},
+		Request: apidoc.SetQuotaRequest{}, Response: responseDoc{Status: "204", Description: "quota updated"},
+	},
 
 	// --- activity (wire_activity.go) ---
 	"GET /v1/orgs/{orgId}/activity": {

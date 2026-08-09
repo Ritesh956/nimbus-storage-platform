@@ -53,6 +53,18 @@ type UsageReader interface {
 	OrgUsageBytes(ctx context.Context, orgID string) (int64, error)
 }
 
+// QuotaReader resolves an org's optional per-tenant quota override, in
+// bytes — nil means "no override, use orgQuotaBytes" (audit §06: quota used
+// to be a single config value with no per-tenant differentiation possible
+// at all). Satisfied directly by org.Repository, same no-adapter pattern as
+// UsageReader/FileCreator. May be nil (not every caller needs per-org
+// overrides — e.g. quota_test.go's white-box Service literals), in which
+// case checkQuota falls straight back to orgQuotaBytes, matching the
+// pre-existing behavior exactly.
+type QuotaReader interface {
+	QuotaOverride(ctx context.Context, orgID string) (*int64, error)
+}
+
 type Service struct {
 	repo              *Repository
 	router            *storage.Router
@@ -62,6 +74,7 @@ type Service struct {
 	activity          ActivityRecorder
 	publisher         EventPublisher
 	usage             UsageReader
+	quota             QuotaReader
 	replicationFactor int
 	// writeQuorum is the minimum number of replicas that must ack a chunk
 	// for CommitChunk to accept it — 0 (or 1) means "any non-empty set",
@@ -81,7 +94,7 @@ type Service struct {
 	orgQuotaBytes  int64
 }
 
-func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, usage UsageReader, replicationFactor, writeQuorum int, chunkSizeBytes, maxUploadBytes, orgQuotaBytes int64) *Service {
+func NewService(repo *Repository, router *storage.Router, files FileCreator, folders FolderOrgLookup, members MembershipChecker, activity ActivityRecorder, publisher EventPublisher, usage UsageReader, quota QuotaReader, replicationFactor, writeQuorum int, chunkSizeBytes, maxUploadBytes, orgQuotaBytes int64) *Service {
 	return &Service{
 		repo:              repo,
 		router:            router,
@@ -91,6 +104,7 @@ func NewService(repo *Repository, router *storage.Router, files FileCreator, fol
 		activity:          activity,
 		publisher:         publisher,
 		usage:             usage,
+		quota:             quota,
 		replicationFactor: replicationFactor,
 		writeQuorum:       writeQuorum,
 		chunkSizeBytes:    chunkSizeBytes,
@@ -164,15 +178,31 @@ func (s *Service) InitUpload(ctx context.Context, userID, folderID, targetFileID
 // bytes quota. Usage counts every stored version (incl. trashed files —
 // their bytes are only freed by purge), so quota is logical bytes, not
 // dedup-adjusted physical bytes: what a user *sees* stored is what counts.
+//
+// The limit itself is orgQuotaBytes (the configured default) unless orgID
+// has its own per-tenant override (audit §06) — s.quota is nil-checked so
+// callers that don't care about overrides (quota_test.go's white-box
+// Service literals) keep their pre-existing, override-free behavior
+// exactly.
 func (s *Service) checkQuota(ctx context.Context, orgID string, sizeBytes int64) error {
-	if s.orgQuotaBytes <= 0 {
+	limit := s.orgQuotaBytes
+	if s.quota != nil {
+		override, err := s.quota.QuotaOverride(ctx, orgID)
+		if err != nil {
+			return err
+		}
+		if override != nil {
+			limit = *override
+		}
+	}
+	if limit <= 0 {
 		return nil
 	}
 	used, err := s.usage.OrgUsageBytes(ctx, orgID)
 	if err != nil {
 		return err
 	}
-	if used+sizeBytes > s.orgQuotaBytes {
+	if used+sizeBytes > limit {
 		return ErrQuotaExceeded
 	}
 	return nil

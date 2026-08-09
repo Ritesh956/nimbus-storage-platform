@@ -16,6 +16,7 @@ import (
 	"nimbus/internal/events"
 	"nimbus/internal/file"
 	"nimbus/internal/folder"
+	"nimbus/internal/org"
 	"nimbus/internal/platform/config"
 	"nimbus/internal/sharing"
 	"nimbus/internal/storage"
@@ -38,13 +39,15 @@ func wireUpload(
 	members membershipAdapter,
 	activitySvc *activity.Service,
 	eventPublisher *events.Publisher,
+	orgRepo *org.Repository,
 ) {
 	// fileRepo.CreateWithVersion/AddVersion/GetForUpload already match
-	// upload.FileCreator's signatures exactly, and activitySvc/eventPublisher
-	// already match upload.ActivityRecorder/EventPublisher — all passed
-	// directly, no adapters needed.
+	// upload.FileCreator's signatures exactly, activitySvc/eventPublisher
+	// already match upload.ActivityRecorder/EventPublisher, and
+	// orgRepo.QuotaOverride already matches upload.QuotaReader (audit §06's
+	// per-tenant quota override) — all passed directly, no adapters needed.
 	uploadRepo := upload.NewRepository(pg)
-	uploadSvc := upload.NewService(uploadRepo, router, fileRepo, folderOrgLookupAdapter{repo: folderRepo}, members, activitySvc, eventPublisher, fileRepo,
+	uploadSvc := upload.NewService(uploadRepo, router, fileRepo, folderOrgLookupAdapter{repo: folderRepo}, members, activitySvc, eventPublisher, fileRepo, orgRepo,
 		cfg.ReplicationFactor, cfg.WriteQuorum, cfg.ChunkSizeBytes, cfg.MaxUploadBytes, cfg.OrgQuotaBytes)
 	uploadHandler := upload.NewHandler(uploadSvc)
 	requireUploadAccess := upload.RequireAccess(uploadRepo, members)

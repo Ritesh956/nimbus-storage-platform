@@ -1883,6 +1883,54 @@
         ]
       }
     },
+    "/v1/orgs/{orgId}/quota": {
+      "patch": {
+        "summary": "Set or clear a per-tenant quota override (platform-admin only)",
+        "tags": [
+          "orgs"
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetQuotaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "quota updated"
+          },
+          "default": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{orgId}/search": {
       "get": {
         "summary": "Full-text file search with filters",
@@ -3656,6 +3704,15 @@
           "owner_id",
           "created_at"
         ]
+      },
+      "SetQuotaRequest": {
+        "type": "object",
+        "properties": {
+          "quota_bytes": {
+            "type": "integer",
+            "nullable": true
+          }
+        }
       },
       "ShareChildrenResponse": {
         "type": "object",

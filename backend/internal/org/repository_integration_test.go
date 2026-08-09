@@ -10,9 +10,12 @@
 package org_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -342,5 +345,173 @@ func TestUsage_AggregatesStorageSharesAndMembers(t *testing.T) {
 	}
 	if u.Activity30d["upload"] != 3 {
 		t.Fatalf("Activity30d = %+v, want the stub's verb counts", u.Activity30d)
+	}
+}
+
+// TestQuotaOverride_DefaultsToNilThenRoundTripsSetAndClear covers the
+// repository layer directly (audit §06: per-org quota override, previously
+// a single global config value with no per-tenant differentiation at all).
+func TestQuotaOverride_DefaultsToNilThenRoundTripsSetAndClear(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	owner := newTestUser(t, pool, "quota-owner")
+
+	repo := org.NewRepository(pool)
+	o, err := repo.CreateWithOwner(ctx, "Quota Repo Org", owner.ID)
+	if err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+
+	if got, err := repo.QuotaOverride(ctx, o.ID); err != nil || got != nil {
+		t.Fatalf("QuotaOverride on a fresh org = (%v, %v), want (nil, nil)", got, err)
+	}
+
+	override := int64(12345)
+	if err := repo.SetQuotaOverride(ctx, o.ID, &override); err != nil {
+		t.Fatalf("SetQuotaOverride: %v", err)
+	}
+	got, err := repo.QuotaOverride(ctx, o.ID)
+	if err != nil || got == nil || *got != override {
+		t.Fatalf("QuotaOverride after set = (%v, %v), want (%d, nil)", got, err, override)
+	}
+
+	if err := repo.SetQuotaOverride(ctx, o.ID, nil); err != nil {
+		t.Fatalf("clear SetQuotaOverride: %v", err)
+	}
+	if got, err := repo.QuotaOverride(ctx, o.ID); err != nil || got != nil {
+		t.Fatalf("QuotaOverride after clear = (%v, %v), want (nil, nil)", got, err)
+	}
+}
+
+func TestSetQuotaOverride_UnknownOrgReturnsErrNotFound(t *testing.T) {
+	pool := newTestPool(t)
+	repo := org.NewRepository(pool)
+	override := int64(100)
+	err := repo.SetQuotaOverride(context.Background(), "00000000-0000-0000-0000-000000000000", &override)
+	if !errors.Is(err, org.ErrNotFound) {
+		t.Fatalf("got err %v, want org.ErrNotFound for a nonexistent org id", err)
+	}
+}
+
+// TestEffectiveQuota_OverridePassesThroughToTheUsageView proves the same
+// aggregation TestUsage_AggregatesStorageSharesAndMembers checked (with no
+// override present) also reflects a real override once one is set — the
+// service-layer counterpart to the repository round-trip above.
+func TestEffectiveQuota_OverridePassesThroughToTheUsageView(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	owner := newTestUser(t, pool, "quota-usage-owner")
+
+	repo := org.NewRepository(pool)
+	o, err := repo.CreateWithOwner(ctx, "Quota Usage Org", owner.ID)
+	if err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+
+	const configuredDefault = int64(5 * 1024 * 1024 * 1024)
+	usage := org.UsageSources{
+		Storage:  stubStorageStats{stats: org.StorageStats{UsedBytes: 1024, LiveFiles: 1, TrashedFiles: 0}},
+		Shares:   stubShareLinkCounter{count: 0},
+		Activity: stubActivityStats{},
+	}
+	svc := org.NewService(repo, nil, nil, usage, configuredDefault)
+
+	if got, err := svc.EffectiveQuota(ctx, o.ID); err != nil || got != configuredDefault {
+		t.Fatalf("EffectiveQuota with no override = (%d, %v), want (%d, nil)", got, err, configuredDefault)
+	}
+
+	override := int64(9999)
+	if err := svc.SetQuota(ctx, o.ID, &override); err != nil {
+		t.Fatalf("SetQuota: %v", err)
+	}
+	if got, err := svc.EffectiveQuota(ctx, o.ID); err != nil || got != override {
+		t.Fatalf("EffectiveQuota after SetQuota = (%d, %v), want (%d, nil)", got, err, override)
+	}
+
+	u, err := svc.Usage(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if u.Storage.QuotaBytes != override {
+		t.Fatalf("Usage().Storage.QuotaBytes = %d, want the override (%d), not the configured default", u.Storage.QuotaBytes, override)
+	}
+}
+
+// The three tests below exercise org.Handler.SetQuota directly (real HTTP
+// request/response, not just the service call above) — the platform-admin
+// gate itself is applied by requirePlatformAdmin middleware in main.go, not
+// by the handler, so what's left for the handler to get right is JSON
+// parsing, the positive-or-null validation, and error-code mapping.
+
+func newSetQuotaRequest(orgID, body string) *http.Request {
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(http.MethodPatch, "/v1/orgs/"+orgID+"/quota", nil)
+	} else {
+		r = httptest.NewRequest(http.MethodPatch, "/v1/orgs/"+orgID+"/quota", bytes.NewBufferString(body))
+	}
+	r.SetPathValue("orgId", orgID)
+	return r
+}
+
+func TestHandlerSetQuota_NonPositiveValueReturns400(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	owner := newTestUser(t, pool, "quota-handler-owner-1")
+	repo := org.NewRepository(pool)
+	o, err := repo.CreateWithOwner(ctx, "Quota Handler Org 1", owner.ID)
+	if err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+	h := org.NewHandler(org.NewService(repo, nil, nil, org.UsageSources{}, 1000))
+
+	for _, body := range []string{`{"quota_bytes":0}`, `{"quota_bytes":-5}`} {
+		w := httptest.NewRecorder()
+		h.SetQuota(w, newSetQuotaRequest(o.ID, body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, want 400", body, w.Code)
+		}
+	}
+}
+
+func TestHandlerSetQuota_ValidSetThenNullClearBothSucceed(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	owner := newTestUser(t, pool, "quota-handler-owner-2")
+	repo := org.NewRepository(pool)
+	o, err := repo.CreateWithOwner(ctx, "Quota Handler Org 2", owner.ID)
+	if err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+	h := org.NewHandler(org.NewService(repo, nil, nil, org.UsageSources{}, 1000))
+
+	w := httptest.NewRecorder()
+	h.SetQuota(w, newSetQuotaRequest(o.ID, `{"quota_bytes":500}`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("set status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	if got, err := repo.QuotaOverride(ctx, o.ID); err != nil || got == nil || *got != 500 {
+		t.Fatalf("QuotaOverride after handler set = (%v, %v), want (500, nil)", got, err)
+	}
+
+	w = httptest.NewRecorder()
+	h.SetQuota(w, newSetQuotaRequest(o.ID, `{"quota_bytes":null}`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("clear status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	if got, err := repo.QuotaOverride(ctx, o.ID); err != nil || got != nil {
+		t.Fatalf("QuotaOverride after handler clear = (%v, %v), want (nil, nil)", got, err)
+	}
+}
+
+func TestHandlerSetQuota_UnknownOrgReturns404(t *testing.T) {
+	pool := newTestPool(t)
+	repo := org.NewRepository(pool)
+	h := org.NewHandler(org.NewService(repo, nil, nil, org.UsageSources{}, 1000))
+
+	w := httptest.NewRecorder()
+	h.SetQuota(w, newSetQuotaRequest("00000000-0000-0000-0000-000000000000", `{"quota_bytes":500}`))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for a nonexistent org id", w.Code)
 	}
 }

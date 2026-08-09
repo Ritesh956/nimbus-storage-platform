@@ -147,6 +147,13 @@ type UsageMember struct {
 	Events30d    int        `json:"events_30d"`
 }
 
+// SetQuotaRequest is PATCH /v1/orgs/{orgId}/quota's body (platform-admin
+// only) — nil/omitted/null clears the org's per-tenant override, falling
+// back to the configured default (org/usage.go, audit §06).
+type SetQuotaRequest struct {
+	QuotaBytes *int64 `json:"quota_bytes"`
+}
+
 // OrgUsage is GET /v1/orgs/{orgId}/usage's response — owner-gated org
 // oversight (org/usage.go), aggregate metadata only.
 type OrgUsage struct {

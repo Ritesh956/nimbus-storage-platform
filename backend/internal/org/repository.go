@@ -143,3 +143,34 @@ func (r *Repository) RemoveMember(ctx context.Context, orgID, userID string) err
 	)
 	return err
 }
+
+// QuotaOverride returns this org's per-tenant quota override in bytes, or
+// nil if it has none (the common case — falls back to the configured
+// default, resolved by the caller). Audit §06: quota used to be a single
+// config value applied identically to every org, with no per-tenant
+// differentiation possible in the data model at all.
+func (r *Repository) QuotaOverride(ctx context.Context, orgID string) (*int64, error) {
+	var quotaBytes *int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT quota_bytes_override FROM organizations WHERE id = $1`, orgID).Scan(&quotaBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return quotaBytes, err
+}
+
+// SetQuotaOverride sets or clears (quotaBytes == nil) an org's per-tenant
+// quota override — platform-admin only (see auth.RequirePlatformAdmin on
+// the route), a cross-tenant limit change is not something an org's own
+// admin should be able to grant themselves.
+func (r *Repository) SetQuotaOverride(ctx context.Context, orgID string, quotaBytes *int64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE organizations SET quota_bytes_override = $1 WHERE id = $2`, quotaBytes, orgID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

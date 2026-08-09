@@ -113,3 +113,27 @@ func (s *Service) RemoveMember(ctx context.Context, orgID, userID string, caller
 	}
 	return s.repo.RemoveMember(ctx, orgID, userID)
 }
+
+// EffectiveQuota resolves orgID's real quota in bytes: its own per-tenant
+// override if one is set, else the configured default (s.quotaBytes).
+// Shared by the usage view (below) and upload.Service's enforcement path
+// (via org.Repository satisfying upload.QuotaReader directly) so both
+// report/enforce the exact same number.
+func (s *Service) EffectiveQuota(ctx context.Context, orgID string) (int64, error) {
+	override, err := s.repo.QuotaOverride(ctx, orgID)
+	if err != nil {
+		return 0, err
+	}
+	if override != nil {
+		return *override, nil
+	}
+	return s.quotaBytes, nil
+}
+
+// SetQuota sets (quotaBytes != nil) or clears (nil) orgID's per-tenant
+// quota override — platform-admin only; see Repository.SetQuotaOverride's
+// doc comment for why a cross-tenant limit change isn't an org-admin
+// action.
+func (s *Service) SetQuota(ctx context.Context, orgID string, quotaBytes *int64) error {
+	return s.repo.SetQuotaOverride(ctx, orgID, quotaBytes)
+}

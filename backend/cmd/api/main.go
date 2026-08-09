@@ -152,7 +152,7 @@ func run() error {
 	activitySvc := wireActivity(mux, rdb, requireAuth, requireMember, activityRepo)
 
 	wireUpload(mux, pg, cfg, requireAuth, requireMember, requireFileAccess, requireFolderAccess,
-		router, fileRepo, folderRepo, sharingRepo, fileSvc, members, activitySvc, eventPublisher)
+		router, fileRepo, folderRepo, sharingRepo, fileSvc, members, activitySvc, eventPublisher, orgRepo)
 
 	middlewares := []func(http.Handler) http.Handler{
 		httpserver.CORS(cfg.CORSOrigin), // outermost: must short-circuit OPTIONS preflight before mux routing

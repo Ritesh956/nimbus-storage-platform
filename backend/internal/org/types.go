@@ -51,6 +51,7 @@ var (
 	ErrAlreadyMember      = errors.New("user is already a member")
 	ErrCannotRemoveOwner  = errors.New("cannot remove the organization owner")
 	ErrTargetUserNotFound = errors.New("user not found")
+	ErrNotFound           = errors.New("organization not found")
 	// Admin-tier bounds (see Role docs above).
 	ErrElevatedRoleNeedsOwner  = errors.New("only owners can grant elevated roles")
 	ErrAdminRemovesMembersOnly = errors.New("admins can only remove plain members")

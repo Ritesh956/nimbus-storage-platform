@@ -83,7 +83,9 @@ func (s *Service) Usage(ctx context.Context, orgID string) (Usage, error) {
 		return Usage{}, err
 	}
 	u.Storage.UsedBytes = storage.UsedBytes
-	u.Storage.QuotaBytes = s.quotaBytes
+	if u.Storage.QuotaBytes, err = s.EffectiveQuota(ctx, orgID); err != nil {
+		return Usage{}, err
+	}
 	u.Storage.LiveFiles = storage.LiveFiles
 	u.Storage.TrashedFiles = storage.TrashedFiles
 
